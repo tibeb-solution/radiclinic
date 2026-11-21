@@ -1,0 +1,11 @@
+{
+  "name": "dcms",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @dcms/web dev",
+    "build": "pnpm --filter @dcms/web build",
+    "lint": "pnpm -r lint"
+  }
+}
