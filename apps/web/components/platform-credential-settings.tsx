@@ -5,6 +5,7 @@ import { type FormEvent, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, KeyRound, ShieldCheck } from 'lucide-react'
 import { changePlatformCredentials, logout } from '@/app/auth-actions'
+import { PasswordInput } from '@/components/password-input'
 
 export function PlatformCredentialSettings({ currentEmail }: { currentEmail: string }) {
   const router = useRouter()
@@ -41,9 +42,9 @@ export function PlatformCredentialSettings({ currentEmail }: { currentEmail: str
       <div className="login-card-rule" />
       <div className="login-card-heading"><h2>Update administrator credentials</h2><p>Change your admin email or password. You can leave the password blank to keep it unchanged.</p></div>
       <form className="clinic-login-form" onSubmit={submit}>
-        <label className="login-field">Current password<input name="currentPassword" type="password" autoComplete="current-password" required /></label>
+        <label className="login-field">Current password<PasswordInput name="currentPassword" autoComplete="current-password" required /></label>
         <label className="login-field">Administrator email<input name="email" type="email" autoComplete="username" defaultValue={currentEmail} required /></label>
-        <label className="login-field">New password<input name="newPassword" type="password" autoComplete="new-password" minLength={12} /><small>Optional. If changing it, use at least 12 characters.</small></label>
+        <label className="login-field">New password<PasswordInput name="newPassword" autoComplete="new-password" minLength={12} /><small>Optional. If changing it, use at least 12 characters.</small></label>
         {error && <p className="login-error" role="alert">{error}</p>}
         <button className="login-submit" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'} <KeyRound /></button>
       </form>

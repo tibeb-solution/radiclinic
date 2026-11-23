@@ -4,6 +4,7 @@ import { type FormEvent, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, KeyRound, ShieldCheck } from 'lucide-react'
 import { changeClinicPassword } from '@/app/auth-actions'
+import { PasswordInput } from '@/components/password-input'
 
 export function ClinicPasswordSetup({ clinicName }: { clinicName: string }) {
   const router = useRouter()
@@ -39,8 +40,8 @@ export function ClinicPasswordSetup({ clinicName }: { clinicName: string }) {
       <div className="login-card-rule" />
       <div className="login-card-heading"><h2>Choose a new password</h2><p>Your administrator issued a temporary password. Replace it to finish setting up your account.</p></div>
       <form className="clinic-login-form" onSubmit={submit}>
-        <label className="login-field">Temporary password<input name="currentPassword" type="password" autoComplete="current-password" required /></label>
-        <label className="login-field">New password<input name="newPassword" type="password" autoComplete="new-password" minLength={12} required /><small>Use at least 12 characters.</small></label>
+        <label className="login-field">Temporary password<PasswordInput name="currentPassword" autoComplete="current-password" required /></label>
+        <label className="login-field">New password<PasswordInput name="newPassword" autoComplete="new-password" minLength={12} required /><small>Use at least 12 characters.</small></label>
         {error && <p className="login-error" role="alert">{error}</p>}
         <button className="login-submit" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Set password'} <ArrowRight /></button>
       </form>

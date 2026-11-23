@@ -370,6 +370,13 @@ export async function createClinicPatient(input: {
   name: string
   phone: string
   dateOfBirth: string
+  sex?: string
+  email?: string
+  address?: string
+  nationalId?: string
+  emergencyContactName?: string
+  emergencyContactPhone?: string
+  emergencyContactRelationship?: string
 }): Promise<MutationResult<Patient>> {
   const account = await clinicAccount()
   if (!account) return { ok: false, error: 'Complete account setup and sign in to an active clinic first.' }
@@ -378,6 +385,13 @@ export async function createClinicPatient(input: {
   if (!input.branchId || !name || name.length > 120 || !patientNumber || patientNumber.length > 32) {
     return { ok: false, error: 'Enter a patient name, patient number, and active branch.' }
   }
+  const email = input.email?.trim().toLowerCase() ?? ''
+  if (email && !validEmail(email)) return { ok: false, error: 'Enter a valid patient email address.' }
+  const sexValue = input.sex?.trim() ?? ''
+  let sex: Patient['sex']
+  if (sexValue === '') sex = undefined
+  else if (sexValue === 'female' || sexValue === 'male' || sexValue === 'other' || sexValue === 'not_specified') sex = sexValue
+  else return { ok: false, error: 'Choose a valid gender option.' }
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase.from('patients').insert({
     organization_id: account.clinicId,
@@ -386,8 +400,15 @@ export async function createClinicPatient(input: {
     full_name: name,
     phone: input.phone.trim() || null,
     date_of_birth: input.dateOfBirth || null,
+    sex: sex ?? null,
+    email: email || null,
+    address: input.address?.trim() || null,
+    national_id: input.nationalId?.trim() || null,
+    emergency_contact_name: input.emergencyContactName?.trim() || null,
+    emergency_contact_phone: input.emergencyContactPhone?.trim() || null,
+    emergency_contact_relationship: input.emergencyContactRelationship?.trim() || null,
     created_by: account.id,
-  }).select('id, organization_id, registered_branch_id, patient_number, full_name, date_of_birth, phone, status, created_at').single()
+  }).select('id, organization_id, registered_branch_id, patient_number, full_name, date_of_birth, sex, phone, email, national_id, address, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, status, created_at').single()
   if (error) return { ok: false, error: error.message.includes('patients_organization_id_patient_number_key') ? 'That patient number is already in use.' : error.message }
   const auditError = await writeAuditEvent(account, 'patient.create', 'patient', data.id, input.branchId)
   if (auditError) return { ok: false, error: auditError }
@@ -397,17 +418,22 @@ export async function createClinicPatient(input: {
     value: {
       id: data.id, organizationId: data.organization_id, registeredBranchId: data.registered_branch_id,
       patientNumber: data.patient_number, name: data.full_name, dateOfBirth: data.date_of_birth ?? undefined,
-      phone: data.phone ?? undefined, status: data.status, createdAt: data.created_at,
+      sex: data.sex ?? undefined, phone: data.phone ?? undefined, email: data.email ?? undefined,
+      nationalId: data.national_id ?? undefined, address: data.address ?? undefined,
+      emergencyContactName: data.emergency_contact_name ?? undefined,
+      emergencyContactPhone: data.emergency_contact_phone ?? undefined,
+      emergencyContactRelationship: data.emergency_contact_relationship ?? undefined,
+      status: data.status, createdAt: data.created_at,
     },
   }
 }
 
-export async function setClinicPatientStatus(patientId: string, status: 'active' | 'inactive'): Promise<ActionResult> {
+export async function setClinicPatientStatus(patientId: string, status: Patient['status']): Promise<ActionResult> {
   const account = await clinicAccount()
   if (!account) return { ok: false, error: 'Complete account setup and sign in to an active clinic first.' }
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase.from('patients')
-    .update({ status })
+    .update({ status, archived_at: status === 'archived' ? new Date().toISOString() : null })
     .eq('organization_id', account.clinicId)
     .eq('id', patientId)
     .select('id, registered_branch_id')
@@ -613,11 +639,6 @@ export async function setClinicStaffStatus(userId: string, active: boolean): Pro
     .maybeSingle()
   if (error) return { ok: false, error: error.message }
   if (!data) return { ok: false, error: 'Staff member not found.' }
-  if (!active) {
-    const admin = createSupabaseAdminClient()
-    const { error: signOutError } = await admin.auth.admin.signOut(userId, 'global')
-    if (signOutError) return { ok: false, error: `Staff access was paused, but existing sessions could not be revoked: ${signOutError.message}` }
-  }
   const auditError = await writeAuditEvent(account, active ? 'team_member.activate' : 'team_member.deactivate', 'profile', userId)
   if (auditError) return { ok: false, error: auditError }
   revalidatePath('/')
@@ -734,7 +755,7 @@ export async function listManagedClinics(): Promise<ManagedClinic[]> {
   const [membersResult, branchesResult] = await Promise.all([
     supabase
       .from('organization_members')
-      .select('organization_id, user_id')
+      .select('organization_id, user_id, active')
       .eq('role', 'organization_administrator')
       .in('organization_id', ids),
     supabase
@@ -761,9 +782,54 @@ export async function listManagedClinics(): Promise<ManagedClinic[]> {
       branchName: branchesResult.data.find((branch) => branch.organization_id === organization.id)?.name ?? '',
       plan: organization.subscription_plan as ClinicPlan,
       status: organization.status === 'suspended' ? 'suspended' : 'active',
+      administratorActive: membership?.active ?? false,
       createdAt: organization.created_at,
     }
   })
+}
+
+export async function setClinicAdminActive(id: string, active: boolean): Promise<ActionResult> {
+  const platformAccount = await authenticatedAccount('platform')
+  if (!platformAccount) {
+    return { ok: false, error: 'You must sign in as a platform administrator to manage clinic access.' }
+  }
+  if (!id || typeof active !== 'boolean') return { ok: false, error: 'Choose a clinic and valid access state.' }
+
+  const admin = createSupabaseAdminClient()
+  const { data: membership, error: membershipError } = await admin
+    .from('organization_members')
+    .select('user_id, active')
+    .eq('organization_id', id)
+    .eq('role', 'organization_administrator')
+    .limit(1)
+    .maybeSingle()
+  if (membershipError) return { ok: false, error: membershipError.message }
+  if (!membership) return { ok: false, error: 'Clinic administrator not found.' }
+  if (membership.active === active) return { ok: true }
+
+  const { data: updatedMembership, error: updateError } = await admin
+    .from('organization_members')
+    .update({ active })
+    .eq('organization_id', id)
+    .eq('user_id', membership.user_id)
+    .eq('active', membership.active)
+    .select('user_id')
+    .maybeSingle()
+  if (updateError) return { ok: false, error: updateError.message }
+  if (!updatedMembership) return { ok: false, error: 'Clinic administrator access changed concurrently. Refresh and try again.' }
+
+  const auditError = await writePlatformAuditEvent(
+    admin,
+    platformAccount.id,
+    id,
+    active ? 'clinic_admin.activated' : 'clinic_admin.deactivated',
+    'profile',
+    membership.user_id,
+    { active }
+  )
+  if (auditError) return { ok: false, error: `Access was updated, but its audit event failed: ${auditError}` }
+  revalidatePath('/admin')
+  return { ok: true }
 }
 
 export async function loginClinic(email: string, password: string): Promise<ActionResult> {
@@ -892,6 +958,27 @@ export async function createClinic(input: {
     }
   }
 
+  const { data: administratorProfile, error: profileError } = await admin
+    .from('profiles')
+    .update({ full_name: name, must_change_password: true })
+    .eq('id', authData.user.id)
+    .select('id')
+    .maybeSingle()
+  if (profileError || !administratorProfile) {
+    const cleanupResults = await Promise.all([
+      admin.from('organizations').delete().eq('id', organizationId),
+      admin.auth.admin.deleteUser(authData.user.id),
+    ])
+    const cleanupError = cleanupResults.find((result) => result.error)?.error
+    const cause = profileError?.message ?? 'The administrator profile was not created.'
+    return {
+      ok: false,
+      error: cleanupError
+        ? `Clinic account setup failed (${cause}); cleanup also failed (${cleanupError.message}). Contact support.`
+        : `Clinic setup was rolled back because its administrator profile could not be configured: ${cause}`,
+    }
+  }
+
   const auditError = await writePlatformAuditEvent(
     admin, platformAccount.id, organizationId, 'organization.create', 'organization', organizationId,
     { name, email, branchName, plan: input.plan }
@@ -920,6 +1007,7 @@ export async function createClinic(input: {
       branchName,
       plan: input.plan as ClinicPlan,
       status: 'active',
+      administratorActive: true,
       createdAt: new Date().toISOString(),
     },
     temporaryPassword,
@@ -967,21 +1055,6 @@ export async function updateClinic(input: {
     .maybeSingle()
   if (membershipError) return { ok: false, error: membershipError.message }
   if (!membership) return { ok: false, error: 'Clinic administrator not found.' }
-
-  if (organization.status !== input.status) {
-    const { data: members, error: membersError } = await admin
-      .from('organization_members')
-      .select('user_id')
-      .eq('organization_id', input.id)
-    if (membersError) return { ok: false, error: membersError.message }
-    const signOutResults = await Promise.all(
-      members.map((member) => admin.auth.admin.signOut(member.user_id, 'global'))
-    )
-    const signOutError = signOutResults.find((result) => result.error)?.error
-    if (signOutError) {
-      return { ok: false, error: `Could not revoke every clinic session; organization status was not changed: ${signOutError.message}` }
-    }
-  }
 
   const { data: branch, error: branchLoadError } = await admin
     .from('branches')
@@ -1099,8 +1172,6 @@ export async function resetClinicPassword(id: string): Promise<
     .update({ must_change_password: true })
     .eq('id', membership.user_id)
   if (profileError) return { ok: false, error: profileError.message }
-  const { error: signOutError } = await admin.auth.admin.signOut(membership.user_id, 'global')
-  if (signOutError) return { ok: false, error: `Password reset, but existing sessions could not be revoked: ${signOutError.message}` }
   const auditError = await writePlatformAuditEvent(
     admin, platformAccount.id, id, 'clinic_admin.password_reset', 'profile', membership.user_id
   )
@@ -1192,4 +1263,1017 @@ export async function changePlatformCredentials(
 
 export async function getAccountForPage(realm: AuthRealm): Promise<AuthenticatedAccount | null> {
   return authenticatedAccount(realm)
+}
+
+export type ClinicalPatientChart = {
+  patient: {
+    id: string
+    patientNumber: string
+    fullName: string
+    dateOfBirth: string | null
+    sex: string | null
+    phone: string | null
+    email: string | null
+    nationalId: string | null
+    address: string | null
+    emergencyContactName: string | null
+    emergencyContactPhone: string | null
+    emergencyContactRelationship: string | null
+    status: string
+    registeredBranchId: string
+    createdAt: string
+  }
+  historyEntries: Array<{
+    id: string
+    category: string
+    entryType: string
+    details: string
+    source: string
+    verificationStatus: string
+    recordedAt: string
+  }>
+  vitals: Array<{
+    id: string
+    visitId: string | null
+    bloodPressureSystolic: number | null
+    bloodPressureDiastolic: number | null
+    pulseBpm: number | null
+    temperatureC: number | null
+    respiratoryRate: number | null
+    oxygenSaturation: number | null
+    bloodGlucose: number | null
+    weightKg: number | null
+    heightCm: number | null
+    notes: string | null
+    source: string
+    recordedAt: string
+  }>
+  visits: Array<{
+    id: string
+    branchId: string
+    visitNumber: string
+    visitType: string
+    reason: string | null
+    chiefComplaint: string | null
+    medicalHistoryReviewed: boolean
+    followUpInstructions: string | null
+    clinicalNotes: string | null
+    visitedAt: string
+  }>
+  examinations: Array<{
+    id: string
+    visitId: string
+    historyOfPresentIllness: string | null
+    extraoralExamination: string | null
+    intraoralExamination: string | null
+    toothExamination: string | null
+    periodontalExamination: string | null
+    softTissueExamination: string | null
+    radiographicFindings: string | null
+    otherObservations: string | null
+    createdAt: string
+  }>
+  diagnoses: Array<{
+    id: string
+    visitId: string
+    diagnosisName: string
+    diagnosisCode: string | null
+    description: string | null
+    anatomicalLocation: string | null
+    toothNumber: string | null
+    supportingFindings: string | null
+    status: string
+    diagnosedAt: string
+  }>
+  odontogram: Array<{
+    id: string
+    visitId: string | null
+    toothNumber: string
+    toothSurface: string
+    finding: string
+    stage: string
+    notes: string | null
+    recordedAt: string
+  }>
+  treatmentPlans: Array<{
+    id: string
+    title: string
+    status: string
+    createdAt: string
+    items: Array<{
+      id: string
+      treatmentName: string
+      toothNumbers: string[]
+      status: string
+      priority: string
+      estimatedCost: number | null
+      createdAt: string
+    }>
+  }>
+  procedures: Array<{
+    id: string
+    visitId: string | null
+    treatmentPlanItemId: string | null
+    procedureName: string
+    toothNumbers: string[]
+    procedureDetails: string
+    clinicalOutcome: string | null
+    performedAt: string
+  }>
+  prescriptions: Array<{
+    id: string
+    visitId: string | null
+    medicationName: string
+    strength: string | null
+    dosage: string
+    route: string
+    frequency: string
+    duration: string | null
+    quantity: string | null
+    instructions: string | null
+    prescribedAt: string
+  }>
+  consents: Array<{
+    id: string
+    visitId: string | null
+    status: string
+    method: string
+    notes: string | null
+    recordedAt: string
+  }>
+  attachments: Array<{
+    id: string
+    category: string
+    fileName: string
+    mimeType: string | null
+    fileSize: number | null
+    description: string | null
+    visitId: string | null
+    toothNumber: string | null
+    createdAt: string
+  }>
+  clinicalRecords: Array<{
+    id: string
+    branchId: string
+    title: string
+    diagnosis: string | null
+    status: string
+    reviewComment: string | null
+    canSubmit: boolean
+    createdAt: string
+  }>
+  canReviewClinicalRecords: boolean
+  canReviewEscalatedClinicalRecords: boolean
+}
+
+export type ClinicalEncounterInput = {
+  patientId: string
+  branchId: string
+  visitType: string
+  reason: string
+  chiefComplaint: string
+  historyReviewed: boolean
+  followUp: string
+  exam: {
+    historyOfPresentIllness: string
+    extraoralExamination: string
+    intraoralExamination: string
+    toothExamination: string
+    periodontalExamination: string
+    softTissueExamination: string
+    radiographicFindings: string
+    otherObservations: string
+  }
+  vitals: {
+    bloodPressureSystolic: string
+    bloodPressureDiastolic: string
+    pulseBpm: string
+    temperatureC: string
+    respiratoryRate: string
+    oxygenSaturation: string
+    bloodGlucose: string
+    weightKg: string
+    heightCm: string
+    notes: string
+    source: string
+  }
+}
+
+export async function getClinicalPatientChart(
+  patientId: string
+): Promise<{ ok: true; data: ClinicalPatientChart } | { ok: false; error: string }> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic to open patient records.' }
+  if (!patientId) return { ok: false, error: 'Choose a patient record.' }
+
+  const supabase = await createSupabaseServerClient()
+  const { data: patient, error: patientError } = await supabase
+    .from('patients')
+    .select('id, organization_id, registered_branch_id, patient_number, full_name, date_of_birth, sex, phone, email, national_id, address, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, status, created_at')
+    .eq('organization_id', account.clinicId)
+    .eq('id', patientId)
+    .maybeSingle()
+  if (patientError) return { ok: false, error: `Could not load patient profile: ${patientError.message}` }
+  if (!patient) return { ok: false, error: 'Patient not found or you do not have access to this branch.' }
+
+  const { error: accessError } = await supabase.from('patient_access_events').insert({
+    organization_id: account.clinicId,
+    branch_id: patient.registered_branch_id,
+    patient_id: patient.id,
+    actor_id: account.id,
+  })
+  if (accessError) return { ok: false, error: `Could not record patient record access: ${accessError.message}` }
+
+  const [
+    historyResult,
+    vitalsResult,
+    visitsResult,
+    examinationsResult,
+    diagnosesResult,
+    odontogramResult,
+    treatmentPlansResult,
+    proceduresResult,
+    prescriptionsResult,
+    consentsResult,
+    attachmentsResult,
+    clinicalRecordsResult,
+  ] = await Promise.all([
+    supabase.from('patient_history_entries').select('id, category, entry_type, details, source, verification_status, recorded_at').eq('patient_id', patientId).order('recorded_at', { ascending: false }),
+    supabase.from('patient_vitals').select('id, visit_id, blood_pressure_systolic, blood_pressure_diastolic, pulse_bpm, temperature_c, respiratory_rate, oxygen_saturation, blood_glucose, weight_kg, height_cm, notes, source, recorded_at').eq('patient_id', patientId).order('recorded_at', { ascending: false }),
+    supabase.from('patient_visits').select('id, branch_id, visit_number, visit_type, reason, chief_complaint, medical_history_reviewed, follow_up_instructions, clinical_notes, visited_at').eq('patient_id', patientId).order('visited_at', { ascending: false }),
+    supabase.from('clinical_examinations').select('id, visit_id, history_of_present_illness, extraoral_examination, intraoral_examination, tooth_examination, periodontal_examination, soft_tissue_examination, radiographic_findings, other_observations, created_at, patient_visits!inner(patient_id)').eq('patient_visits.patient_id', patientId).order('created_at', { ascending: false }),
+    supabase.from('visit_diagnoses').select('id, visit_id, diagnosis_name, diagnosis_code, description, anatomical_location, tooth_number, supporting_findings, status, diagnosed_at, patient_visits!inner(patient_id)').eq('patient_visits.patient_id', patientId).order('diagnosed_at', { ascending: false }),
+    supabase.from('odontogram_findings').select('id, visit_id, tooth_number, tooth_surface, finding, stage, notes, recorded_at').eq('patient_id', patientId).order('recorded_at', { ascending: false }),
+    supabase.from('treatment_plans').select('id, title, status, created_at, treatment_plan_items(id, treatment_name, tooth_numbers, status, priority, estimated_cost, created_at)').eq('patient_id', patientId).order('created_at', { ascending: false }),
+    supabase.from('performed_procedures').select('id, visit_id, treatment_plan_item_id, procedure_name, tooth_numbers, procedure_details, clinical_outcome, performed_at').eq('patient_id', patientId).order('performed_at', { ascending: false }),
+    supabase.from('prescriptions').select('id, visit_id, medication_name, strength, dosage, route, frequency, duration, quantity, instructions, prescribed_at').eq('patient_id', patientId).order('prescribed_at', { ascending: false }),
+    supabase.from('patient_consents').select('id, visit_id, status, method, notes, recorded_at').eq('patient_id', patientId).order('recorded_at', { ascending: false }),
+    supabase.from('patient_attachments').select('id, category, file_name, mime_type, file_size, description, visit_id, tooth_number, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }),
+    supabase.from('clinical_records')    .select('id, branch_id, title, diagnosis, status, review_comment, submitted_by, created_at').eq('patient_id', patientId).order('created_at', { ascending: false }),
+  ])
+  for (const [label, result] of [
+    ['medical and dental history', historyResult],
+    ['vital signs', vitalsResult],
+    ['visits', visitsResult],
+    ['examinations', examinationsResult],
+    ['diagnoses', diagnosesResult],
+    ['dental chart', odontogramResult],
+    ['treatment plans', treatmentPlansResult],
+    ['procedures', proceduresResult],
+    ['prescriptions', prescriptionsResult],
+    ['consent records', consentsResult],
+    ['clinical documents', attachmentsResult],
+    ['clinical records', clinicalRecordsResult],
+  ] as const) {
+    if (result.error) return { ok: false, error: `Could not load ${label}: ${result.error.message}` }
+  }
+
+  const historyRows = historyResult.data ?? []
+  const vitalRows = vitalsResult.data ?? []
+  const visitRows = visitsResult.data ?? []
+  const examinationRows = examinationsResult.data ?? []
+  const diagnosisRows = diagnosesResult.data ?? []
+  const odontogramRows = odontogramResult.data ?? []
+  const treatmentPlanRows = treatmentPlansResult.data ?? []
+  const procedureRows = proceduresResult.data ?? []
+  const prescriptionRows = prescriptionsResult.data ?? []
+  const consentRows = consentsResult.data ?? []
+  const attachmentRows = attachmentsResult.data ?? []
+  const clinicalRecordRows = clinicalRecordsResult.data ?? []
+
+  return {
+    ok: true,
+    data: {
+      patient: {
+        id: patient.id,
+        patientNumber: patient.patient_number,
+        fullName: patient.full_name,
+        dateOfBirth: patient.date_of_birth,
+        sex: patient.sex,
+        phone: patient.phone,
+        email: patient.email,
+        nationalId: patient.national_id,
+        address: patient.address,
+        emergencyContactName: patient.emergency_contact_name,
+        emergencyContactPhone: patient.emergency_contact_phone,
+        emergencyContactRelationship: patient.emergency_contact_relationship,
+        status: patient.status,
+        registeredBranchId: patient.registered_branch_id,
+        createdAt: patient.created_at,
+      },
+      historyEntries: historyRows.map((entry) => ({
+        id: entry.id,
+        category: entry.category,
+        entryType: entry.entry_type,
+        details: entry.details,
+        source: entry.source,
+        verificationStatus: entry.verification_status,
+        recordedAt: entry.recorded_at,
+      })),
+      vitals: vitalRows.map((item) => ({
+        id: item.id,
+        visitId: item.visit_id,
+        bloodPressureSystolic: item.blood_pressure_systolic,
+        bloodPressureDiastolic: item.blood_pressure_diastolic,
+        pulseBpm: item.pulse_bpm,
+        temperatureC: item.temperature_c,
+        respiratoryRate: item.respiratory_rate,
+        oxygenSaturation: item.oxygen_saturation,
+        bloodGlucose: item.blood_glucose,
+        weightKg: item.weight_kg,
+        heightCm: item.height_cm,
+        notes: item.notes,
+        source: item.source,
+        recordedAt: item.recorded_at,
+      })),
+      visits: visitRows.map((visit) => ({
+        id: visit.id,
+        branchId: visit.branch_id,
+        visitNumber: visit.visit_number,
+        visitType: visit.visit_type,
+        reason: visit.reason,
+        chiefComplaint: visit.chief_complaint,
+        medicalHistoryReviewed: visit.medical_history_reviewed,
+        followUpInstructions: visit.follow_up_instructions,
+        clinicalNotes: visit.clinical_notes,
+        visitedAt: visit.visited_at,
+      })),
+      examinations: examinationRows.map((exam) => ({
+        id: exam.id,
+        visitId: exam.visit_id,
+        historyOfPresentIllness: exam.history_of_present_illness,
+        extraoralExamination: exam.extraoral_examination,
+        intraoralExamination: exam.intraoral_examination,
+        toothExamination: exam.tooth_examination,
+        periodontalExamination: exam.periodontal_examination,
+        softTissueExamination: exam.soft_tissue_examination,
+        radiographicFindings: exam.radiographic_findings,
+        otherObservations: exam.other_observations,
+        createdAt: exam.created_at,
+      })),
+      diagnoses: diagnosisRows.map((diagnosis) => ({
+        id: diagnosis.id,
+        visitId: diagnosis.visit_id,
+        diagnosisName: diagnosis.diagnosis_name,
+        diagnosisCode: diagnosis.diagnosis_code,
+        description: diagnosis.description,
+        anatomicalLocation: diagnosis.anatomical_location,
+        toothNumber: diagnosis.tooth_number,
+        supportingFindings: diagnosis.supporting_findings,
+        status: diagnosis.status,
+        diagnosedAt: diagnosis.diagnosed_at,
+      })),
+      odontogram: odontogramRows.map((finding) => ({
+        id: finding.id,
+        visitId: finding.visit_id,
+        toothNumber: finding.tooth_number,
+        toothSurface: finding.tooth_surface,
+        finding: finding.finding,
+        stage: finding.stage,
+        notes: finding.notes,
+        recordedAt: finding.recorded_at,
+      })),
+      treatmentPlans: treatmentPlanRows.map((plan) => ({
+        id: plan.id,
+        title: plan.title,
+        status: plan.status,
+        createdAt: plan.created_at,
+        items: (plan.treatment_plan_items ?? []).map((item) => ({
+          id: item.id,
+          treatmentName: item.treatment_name,
+          toothNumbers: item.tooth_numbers,
+          status: item.status,
+          priority: item.priority,
+          estimatedCost: item.estimated_cost,
+          createdAt: item.created_at,
+        })),
+      })),
+      procedures: procedureRows.map((procedure) => ({
+        id: procedure.id,
+        visitId: procedure.visit_id,
+        treatmentPlanItemId: procedure.treatment_plan_item_id,
+        procedureName: procedure.procedure_name,
+        toothNumbers: procedure.tooth_numbers,
+        procedureDetails: procedure.procedure_details,
+        clinicalOutcome: procedure.clinical_outcome,
+        performedAt: procedure.performed_at,
+      })),
+      prescriptions: prescriptionRows.map((prescription) => ({
+        id: prescription.id,
+        visitId: prescription.visit_id,
+        medicationName: prescription.medication_name,
+        strength: prescription.strength,
+        dosage: prescription.dosage,
+        route: prescription.route,
+        frequency: prescription.frequency,
+        duration: prescription.duration,
+        quantity: prescription.quantity,
+        instructions: prescription.instructions,
+        prescribedAt: prescription.prescribed_at,
+      })),
+      consents: consentRows.map((consent) => ({
+        id: consent.id,
+        visitId: consent.visit_id,
+        status: consent.status,
+        method: consent.method,
+        notes: consent.notes,
+        recordedAt: consent.recorded_at,
+      })),
+      attachments: attachmentRows.map((attachment) => ({
+        id: attachment.id,
+        category: attachment.category,
+        fileName: attachment.file_name,
+        mimeType: attachment.mime_type,
+        fileSize: attachment.file_size,
+        description: attachment.description,
+        visitId: attachment.visit_id,
+        toothNumber: attachment.tooth_number,
+        createdAt: attachment.created_at,
+      })),
+      clinicalRecords: clinicalRecordRows.map((record) => ({
+        id: record.id,
+        branchId: record.branch_id,
+        title: record.title,
+        diagnosis: record.diagnosis,
+        status: record.status,
+        reviewComment: record.review_comment,
+        canSubmit: record.submitted_by === account.id && ['draft', 'returned'].includes(record.status),
+        createdAt: record.created_at,
+      })),
+      canReviewClinicalRecords: [
+        'Organization Administrator',
+        'Central Clinical Supervisor',
+        'Branch Supervisor',
+      ].includes(account.role ?? ''),
+      canReviewEscalatedClinicalRecords: [
+        'Organization Administrator',
+        'Central Clinical Supervisor',
+      ].includes(account.role ?? ''),
+    },
+  }
+}
+
+export async function createClinicalEncounter(
+  input: ClinicalEncounterInput
+): Promise<MutationResult<string>> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !input.branchId || !input.visitType.trim()) {
+    return { ok: false, error: 'Choose a patient, branch, and visit type.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.rpc('create_clinical_encounter', {
+    p_patient_id: input.patientId,
+    p_branch_id: input.branchId,
+    p_visit_type: input.visitType.trim(),
+    p_reason: input.reason.trim(),
+    p_chief_complaint: input.chiefComplaint.trim(),
+    p_history_reviewed: input.historyReviewed,
+    p_exam: {
+      history_of_present_illness: input.exam.historyOfPresentIllness,
+      extraoral_examination: input.exam.extraoralExamination,
+      intraoral_examination: input.exam.intraoralExamination,
+      tooth_examination: input.exam.toothExamination,
+      periodontal_examination: input.exam.periodontalExamination,
+      soft_tissue_examination: input.exam.softTissueExamination,
+      radiographic_findings: input.exam.radiographicFindings,
+      other_observations: input.exam.otherObservations,
+    },
+    p_vitals: Object.fromEntries(
+      Object.entries({
+        blood_pressure_systolic: input.vitals.bloodPressureSystolic,
+        blood_pressure_diastolic: input.vitals.bloodPressureDiastolic,
+        pulse_bpm: input.vitals.pulseBpm,
+        temperature_c: input.vitals.temperatureC,
+        respiratory_rate: input.vitals.respiratoryRate,
+        oxygen_saturation: input.vitals.oxygenSaturation,
+        blood_glucose: input.vitals.bloodGlucose,
+        weight_kg: input.vitals.weightKg,
+        height_cm: input.vitals.heightCm,
+        notes: input.vitals.notes,
+        source: input.vitals.source,
+      }).filter(([, value]) => value.trim() !== '')
+    ),
+    p_follow_up: input.followUp.trim(),
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true, value: data }
+}
+
+export async function addPatientHistoryEntry(input: {
+  patientId: string
+  category: 'general_medical' | 'dental'
+  entryType: string
+  details: string
+  source: string
+  verified: boolean
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !input.entryType.trim() || !input.details.trim()) {
+    return { ok: false, error: 'Enter a history category, entry type, and details.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('patient_history_entries').insert({
+    organization_id: account.clinicId,
+    patient_id: input.patientId,
+    category: input.category,
+    entry_type: input.entryType.trim(),
+    details: input.details.trim(),
+    source: input.source.trim() || 'patient_reported',
+    verification_status: input.verified ? 'verified' : 'unverified',
+    recorded_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  const auditError = await writeAuditEvent(account, 'patient.history.add', 'patient_history_entry', data.id)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function updateClinicPatientProfile(input: {
+  patientId: string
+  fullName: string
+  dateOfBirth: string
+  sex: string
+  phone: string
+  email: string
+  nationalId: string
+  address: string
+  emergencyContactName: string
+  emergencyContactPhone: string
+  emergencyContactRelationship: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  const fullName = input.fullName.trim()
+  const email = input.email.trim().toLowerCase()
+  if (!input.patientId || !fullName || fullName.length > 120 || (email && !validEmail(email))) {
+    return { ok: false, error: 'Enter a patient name and a valid email address.' }
+  }
+  const sexValue = input.sex.trim()
+  let sex: Patient['sex']
+  if (!sexValue) sex = undefined
+  else if (sexValue === 'female' || sexValue === 'male' || sexValue === 'other' || sexValue === 'not_specified') sex = sexValue
+  else return { ok: false, error: 'Choose a valid gender option.' }
+
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('patients').update({
+    full_name: fullName,
+    date_of_birth: input.dateOfBirth || null,
+    sex: sex ?? null,
+    phone: input.phone.trim() || null,
+    email: email || null,
+    national_id: input.nationalId.trim() || null,
+    address: input.address.trim() || null,
+    emergency_contact_name: input.emergencyContactName.trim() || null,
+    emergency_contact_phone: input.emergencyContactPhone.trim() || null,
+    emergency_contact_relationship: input.emergencyContactRelationship.trim() || null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', input.patientId).eq('organization_id', account.clinicId)
+    .select('id, registered_branch_id').maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: 'Patient not found or your role cannot update this profile.' }
+  const auditError = await writeAuditEvent(account, 'patient.profile.update', 'patient', data.id, data.registered_branch_id)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function addVisitDiagnosis(input: {
+  visitId: string
+  name: string
+  code: string
+  description: string
+  location: string
+  toothNumber: string
+  findings: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.visitId || !input.name.trim()) return { ok: false, error: 'Choose a visit and enter a diagnosis.' }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('visit_diagnoses').insert({
+    organization_id: account.clinicId,
+    visit_id: input.visitId,
+    diagnosis_name: input.name.trim(),
+    diagnosis_code: input.code.trim() || null,
+    description: input.description.trim() || null,
+    anatomical_location: input.location.trim() || null,
+    tooth_number: input.toothNumber.trim() || null,
+    supporting_findings: input.findings.trim() || null,
+    diagnosed_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  const auditError = await writeAuditEvent(account, 'diagnosis.create', 'visit_diagnosis', data.id)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function addOdontogramFinding(input: {
+  patientId: string
+  visitId: string
+  performedProcedureId: string
+  toothNumber: string
+  surface: string
+  finding: string
+  stage: string
+  notes: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !/^(1[1-8]|2[1-8]|3[1-8]|4[1-8]|5[1-5]|6[1-5]|7[1-5]|8[1-5])$/.test(input.toothNumber)) {
+    return { ok: false, error: 'Choose a valid FDI tooth number.' }
+  }
+  if (input.stage === 'completed' && !input.performedProcedureId) {
+    return { ok: false, error: 'Link a completed finding to its actual performed procedure.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('odontogram_findings').insert({
+    organization_id: account.clinicId,
+    patient_id: input.patientId,
+    visit_id: input.visitId || null,
+    performed_procedure_id: input.performedProcedureId || null,
+    tooth_number: input.toothNumber,
+    tooth_surface: input.surface,
+    finding: input.finding.trim(),
+    stage: input.stage,
+    notes: input.notes.trim() || null,
+    recorded_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  const auditError = await writeAuditEvent(account, 'odontogram.finding.add', 'odontogram_finding', data.id)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function createClinicPrescription(input: {
+  patientId: string
+  visitId: string
+  medicationName: string
+  strength: string
+  dosage: string
+  route: string
+  frequency: string
+  duration: string
+  quantity: string
+  instructions: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !input.medicationName.trim() || !input.dosage.trim() || !input.route.trim() || !input.frequency.trim()) {
+    return { ok: false, error: 'Complete the patient, medication, dosage, route, and frequency fields.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('prescriptions').insert({
+    organization_id: account.clinicId,
+    patient_id: input.patientId,
+    visit_id: input.visitId || null,
+    medication_name: input.medicationName.trim(),
+    strength: input.strength.trim() || null,
+    dosage: input.dosage.trim(),
+    route: input.route.trim(),
+    frequency: input.frequency.trim(),
+    duration: input.duration.trim() || null,
+    quantity: input.quantity.trim() || null,
+    instructions: input.instructions.trim() || null,
+    prescribed_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  const auditError = await writeAuditEvent(account, 'prescription.create', 'prescription', data.id)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function recordPatientConsent(input: {
+  patientId: string
+  visitId: string
+  treatmentPlanItemId: string
+  status: 'given' | 'refused' | 'withdrawn'
+  method: string
+  notes: string
+  attachmentId: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !input.method.trim()) return { ok: false, error: 'Choose a patient and record how consent was discussed.' }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('patient_consents').insert({
+    organization_id: account.clinicId,
+    patient_id: input.patientId,
+    visit_id: input.visitId || null,
+    treatment_plan_item_id: input.treatmentPlanItemId || null,
+    status: input.status,
+    method: input.method.trim(),
+    notes: input.notes.trim() || null,
+    document_attachment_id: input.attachmentId || null,
+    recorded_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  const auditError = await writeAuditEvent(account, `patient.consent.${input.status}`, 'patient_consent', data.id)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function uploadClinicalAttachment(formData: FormData): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  const file = formData.get('file')
+  if (!(file instanceof File) || file.size === 0 || file.size > 20 * 1024 * 1024) {
+    return { ok: false, error: 'Choose a file smaller than 20 MB.' }
+  }
+  const extensionByMimeType: Record<string, string> = {
+    'application/pdf': 'pdf',
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'application/dicom': 'dcm',
+  }
+  const extension = extensionByMimeType[file.type]
+  if (!extension) return { ok: false, error: 'Use a PDF, JPEG, PNG, WebP, or DICOM file.' }
+
+  const patientId = String(formData.get('patientId') ?? '')
+  const branchId = String(formData.get('branchId') ?? '')
+  const visitId = String(formData.get('visitId') ?? '')
+  const category = String(formData.get('category') ?? 'other')
+  const toothNumber = String(formData.get('toothNumber') ?? '').trim()
+  const description = String(formData.get('description') ?? '').trim()
+  const allowedCategories = [
+    'dental_xray', 'panoramic_radiograph', 'intraoral_photo', 'clinical_photo',
+    'laboratory_report', 'referral', 'consent', 'treatment_document', 'other',
+  ]
+  if (!patientId || !branchId || !allowedCategories.includes(category)) {
+    return { ok: false, error: 'Choose a patient, branch, and valid document category.' }
+  }
+  if (toothNumber && !/^(1[1-8]|2[1-8]|3[1-8]|4[1-8]|5[1-5]|6[1-5]|7[1-5]|8[1-5])$/.test(toothNumber)) {
+    return { ok: false, error: 'Enter a valid FDI tooth number or leave the tooth field blank.' }
+  }
+
+  const supabase = await createSupabaseServerClient()
+  const { data: patient, error: patientError } = await supabase.from('patients')
+    .select('id, registered_branch_id')
+    .eq('organization_id', account.clinicId)
+    .eq('id', patientId)
+    .maybeSingle()
+  if (patientError) return { ok: false, error: patientError.message }
+  if (!patient || patient.registered_branch_id !== branchId) {
+    return { ok: false, error: 'Patient or branch is not accessible.' }
+  }
+  if (visitId) {
+    const { data: visit, error: visitError } = await supabase.from('patient_visits')
+      .select('id')
+      .eq('id', visitId)
+      .eq('patient_id', patientId)
+      .eq('branch_id', branchId)
+      .maybeSingle()
+    if (visitError) return { ok: false, error: visitError.message }
+    if (!visit) return { ok: false, error: 'Choose a visit belonging to this patient and branch.' }
+  }
+
+  const path = `${account.clinicId}/${branchId}/${patientId}/${randomUUID()}.${extension}`
+  const { error: uploadError } = await supabase.storage
+    .from('clinical-documents')
+    .upload(path, file, { contentType: file.type, upsert: false })
+  if (uploadError) return { ok: false, error: `File upload failed: ${uploadError.message}` }
+
+  const { data: attachment, error: metadataError } = await supabase.from('patient_attachments').insert({
+    organization_id: account.clinicId,
+    patient_id: patientId,
+    visit_id: visitId || null,
+    storage_bucket: 'clinical-documents',
+    storage_path: path,
+    file_name: file.name.slice(0, 255),
+    mime_type: file.type,
+    file_size: file.size,
+    category,
+    description: description || null,
+    tooth_number: toothNumber || null,
+    uploaded_by: account.id,
+  }).select('id').single()
+  if (metadataError) {
+    const admin = createSupabaseAdminClient()
+    const { error: cleanupError } = await admin.storage.from('clinical-documents').remove([path])
+    return {
+      ok: false,
+      error: cleanupError
+        ? `File metadata could not be saved (${metadataError.message}), and upload cleanup failed (${cleanupError.message}). Contact support.`
+        : `File metadata could not be saved; the uploaded file was removed: ${metadataError.message}`,
+    }
+  }
+  const auditError = await writeAuditEvent(account, 'patient.attachment.upload', 'patient_attachment', attachment.id, branchId)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function getClinicalAttachmentUrl(
+  attachmentId: string
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  const supabase = await createSupabaseServerClient()
+  const { data: attachment, error: attachmentError } = await supabase.from('patient_attachments')
+    .select('storage_bucket, storage_path, patient_id')
+    .eq('id', attachmentId)
+    .eq('organization_id', account.clinicId)
+    .maybeSingle()
+  if (attachmentError) return { ok: false, error: attachmentError.message }
+  if (!attachment) return { ok: false, error: 'Document not found or you do not have access to it.' }
+  const { data: patient, error: patientError } = await supabase.from('patients')
+    .select('registered_branch_id')
+    .eq('id', attachment.patient_id)
+    .eq('organization_id', account.clinicId)
+    .maybeSingle()
+  if (patientError) return { ok: false, error: patientError.message }
+  if (!patient) return { ok: false, error: 'Patient not found or you do not have access to this document.' }
+  const { error: accessError } = await supabase.from('patient_access_events').insert({
+    organization_id: account.clinicId,
+    branch_id: patient.registered_branch_id,
+    patient_id: attachment.patient_id,
+    actor_id: account.id,
+    access_reason: 'clinical_document_download',
+  })
+  if (accessError) return { ok: false, error: `Could not record document access: ${accessError.message}` }
+  const { data, error } = await supabase.storage
+    .from(attachment.storage_bucket)
+    .createSignedUrl(attachment.storage_path, 300)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, url: data.signedUrl }
+}
+
+export async function createClinicTreatmentPlan(input: {
+  patientId: string
+  branchId: string
+  visitId: string
+  title: string
+  treatmentName: string
+  toothNumbers: string[]
+  description: string
+  clinicalReason: string
+  estimatedCost: string
+  estimatedDurationMinutes: string
+  priority: string
+}): Promise<MutationResult<string>> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !input.branchId || !input.title.trim() || !input.treatmentName.trim()) {
+    return { ok: false, error: 'Complete the plan title and treatment name.' }
+  }
+  const cost = input.estimatedCost.trim() ? Number(input.estimatedCost) : null
+  const duration = input.estimatedDurationMinutes.trim() ? Number(input.estimatedDurationMinutes) : null
+  if ((cost !== null && (!Number.isFinite(cost) || cost < 0))
+    || (duration !== null && (!Number.isInteger(duration) || duration <= 0))) {
+    return { ok: false, error: 'Enter a valid non-negative cost and positive duration.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.rpc('create_treatment_plan_with_item', {
+    p_patient_id: input.patientId,
+    p_branch_id: input.branchId,
+    p_visit_id: input.visitId || null,
+    p_title: input.title.trim(),
+    p_treatment_name: input.treatmentName.trim(),
+    p_tooth_numbers: input.toothNumbers,
+    p_description: input.description.trim(),
+    p_clinical_reason: input.clinicalReason.trim(),
+    p_estimated_cost: cost,
+    p_estimated_duration_minutes: duration,
+    p_priority: input.priority,
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true, value: data }
+}
+
+export async function updateTreatmentPlanItemStatus(
+  itemId: string,
+  status: 'awaiting_authorization' | 'approved' | 'scheduled' | 'in_progress' | 'completed' | 'cancelled' | 'discontinued'
+): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!itemId) return { ok: false, error: 'Choose a treatment item.' }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('treatment_plan_items')
+    .update({
+      status,
+      ...(status === 'approved' ? { approved_by: account.id, approved_at: new Date().toISOString() } : {}),
+    })
+    .eq('id', itemId)
+    .eq('organization_id', account.clinicId)
+    .select('id, plan_id')
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: 'Treatment item not found or you are not allowed to change it.' }
+  const { data: plan, error: planError } = await supabase.from('treatment_plans')
+    .select('branch_id')
+    .eq('id', data.plan_id)
+    .eq('organization_id', account.clinicId)
+    .single()
+  if (planError) return { ok: false, error: `Treatment status changed, but its branch could not be loaded: ${planError.message}` }
+  if (status !== 'approved') {
+    const auditError = await writeAuditEvent(
+      account, `treatment_plan_item.${status}`, 'treatment_plan_item', data.id, plan.branch_id, { status }
+    )
+    if (auditError) return { ok: false, error: auditError }
+  }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function recordPerformedProcedure(input: {
+  patientId: string
+  branchId: string
+  visitId: string
+  treatmentPlanItemId: string
+  procedureName: string
+  toothNumbers: string[]
+  details: string
+  clinicalOutcome: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !input.branchId || !input.procedureName.trim() || !input.details.trim()) {
+    return { ok: false, error: 'Enter the procedure, patient, branch, and procedure details.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('performed_procedures').insert({
+    organization_id: account.clinicId,
+    branch_id: input.branchId,
+    patient_id: input.patientId,
+    visit_id: input.visitId || null,
+    treatment_plan_item_id: input.treatmentPlanItemId || null,
+    procedure_name: input.procedureName.trim(),
+    tooth_numbers: input.toothNumbers,
+    procedure_details: input.details.trim(),
+    clinical_outcome: input.clinicalOutcome.trim() || null,
+    performed_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  const auditError = await writeAuditEvent(account, 'procedure.performed', 'performed_procedure', data.id, input.branchId)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function submitClinicalRecord(
+  recordId: string,
+  correctionReason = '',
+  correctedRecord?: { title: string; diagnosis: string }
+): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!recordId) return { ok: false, error: 'Choose a clinical record to submit.' }
+  if (correctedRecord && (!correctedRecord.title.trim() || !correctedRecord.diagnosis.trim())) {
+    return { ok: false, error: 'Enter the corrected record title and clinical notes.' }
+  }
+  if (correctionReason.trim().length > 1000) {
+    return { ok: false, error: 'Keep the correction reason under 1,000 characters.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('clinical_records')
+    .update({
+      status: 'submitted',
+      correction_reason: correctionReason.trim() || null,
+      ...(correctedRecord ? {
+        title: correctedRecord.title.trim(),
+        diagnosis: correctedRecord.diagnosis.trim(),
+      } : {}),
+    })
+    .eq('id', recordId)
+    .eq('organization_id', account.clinicId)
+    .eq('submitted_by', account.id)
+    .in('status', ['draft', 'returned'])
+    .select('id, branch_id')
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: 'Record is not an editable draft or returned record.' }
+  const auditError = await writeAuditEvent(account, 'clinical_record.submit', 'clinical_record', data.id, data.branch_id)
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function reviewClinicalRecord(
+  recordId: string,
+  decision: 'approved' | 'returned' | 'escalated',
+  comment: string
+): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!recordId || (decision !== 'approved' && !comment.trim())) {
+    return { ok: false, error: 'Choose a record and provide a reason when returning or escalating it.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('review_clinical_record', {
+    p_clinical_record_id: recordId,
+    p_decision: decision,
+    p_comment: comment.trim(),
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
 }

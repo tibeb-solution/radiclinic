@@ -39,9 +39,15 @@ export interface Patient {
   patientNumber: string
   name: string
   dateOfBirth?: string
+  sex?: 'female' | 'male' | 'other' | 'not_specified'
   phone?: string
+  email?: string
   nationalId?: string
-  status: 'active' | 'inactive'
+  address?: string
+  emergencyContactName?: string
+  emergencyContactPhone?: string
+  emergencyContactRelationship?: string
+  status: 'active' | 'inactive' | 'archived'
   createdAt: string
 }
 

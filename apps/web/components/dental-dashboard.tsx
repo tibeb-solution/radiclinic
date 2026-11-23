@@ -29,6 +29,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react'
+import { PatientClinicalChart } from '@/components/patient-clinical-chart'
 import type {
   Appointment,
   AppointmentStatus,
@@ -128,7 +129,7 @@ function Sidebar({
   return <>
     {open && <button className="sidebar-scrim" aria-label="Close navigation" onClick={onClose} />}
     <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
-      <div className="brand-lockup"><BrandMark /><span className="brand-name">molar<span>care</span></span><button className="icon-button sidebar-close" onClick={onClose} aria-label="Close navigation"><X /></button></div>
+      <div className="brand-lockup"><BrandMark /><span className="brand-name">Clinic<span> Care</span></span><button className="icon-button sidebar-close" onClick={onClose} aria-label="Close navigation"><X /></button></div>
       <button className="clinic-switcher" aria-label={`View branches for ${clinicName}`} onClick={() => { onNavigate('Branches'); onClose() }}>
         <span className="clinic-avatar"><Stethoscope /></span>
         <span className="clinic-copy"><strong>{clinicName}</strong><small>Organization workspace</small></span>
@@ -148,7 +149,7 @@ function Sidebar({
         <Link className="nav-item" href="/admin"><Building2 className="nav-icon" /><span>Platform admin</span></Link>
         <form action={logout.bind(null, 'clinic')}><button className="nav-item" type="submit"><LockKeyhole className="nav-icon" /><span>Sign out</span></button></form>
         <div className="sidebar-divider" />
-        <div className="provider-brand"><span className="provider-icon"><Activity /></span><span><small>Powered by</small><strong>Northstar Health</strong></span><ShieldCheck className="provider-check" /></div>
+        <div className="provider-brand"><span className="provider-icon"><Activity /></span><span><small>Powered by</small><strong>Tibeb Health</strong></span><ShieldCheck className="provider-check" /></div>
         <div className="profile-row"><div className="profile-avatar">CA</div><div className="profile-copy"><strong>{clinicName} Admin</strong><small>Clinic administrator</small></div><MoreHorizontal className="profile-more" /></div>
       </div>
     </aside>
@@ -180,19 +181,27 @@ function Avatar({ name }: { name: string }) {
 function PatientTable({
   patients,
   onStatusChange,
+  onOpen,
 }: {
   patients: Patient[]
-  onStatusChange: (patient: Patient) => void
+  onStatusChange: (patient: Patient, status: Patient['status']) => void
+  onOpen: (patient: Patient) => void
 }) {
   if (patients.length === 0) {
     return <div className="workspace-empty"><UsersRound /><strong>No patients yet</strong><span>Add a patient to start keeping your clinic records here.</span></div>
   }
   return <div className="table-wrap"><table className="patient-table"><thead><tr><th>Patient</th><th>Patient number</th><th>Phone</th><th>Status</th><th>Action</th></tr></thead><tbody>
     {patients.map((patient) => <tr key={patient.id}>
-      <td><div className="patient-cell"><Avatar name={patient.name} /><span><strong>{patient.name}</strong><small>{patient.dateOfBirth || 'Date of birth not provided'}</small></span></div></td>
+      <td><div className="patient-cell"><Avatar name={patient.name} /><span><button className="patient-profile-link" onClick={() => onOpen(patient)}><strong>{patient.name}</strong></button><small>{patient.dateOfBirth || 'Date of birth not provided'}</small></span></div></td>
       <td>{patient.patientNumber}</td><td>{patient.phone || '—'}</td>
       <td><span className={`status ${patient.status === 'active' ? 'status-checked-in' : ''}`}>{patient.status}</span></td>
-      <td><button className="row-action" onClick={() => onStatusChange(patient)}>{patient.status === 'active' ? 'Deactivate' : 'Reactivate'}</button></td>
+      <td>{patient.status === 'archived'
+        ? <button className="row-action" onClick={() => onStatusChange(patient, 'active')}>Restore</button>
+        : <div className="patient-row-actions">
+            <button className="row-action" onClick={() => onStatusChange(patient, patient.status === 'active' ? 'inactive' : 'active')}>{patient.status === 'active' ? 'Deactivate' : 'Reactivate'}</button>
+            <button className="row-action" onClick={() => onStatusChange(patient, 'archived')}>Archive</button>
+          </div>}
+      </td>
     </tr>)}
   </tbody></table></div>
 }
@@ -250,6 +259,7 @@ export function DentalDashboard({
   const [data, setData] = useState<DcmsLocalData | null>(null)
   const [loadError, setLoadError] = useState('')
   const [branchId, setBranchId] = useState('')
+  const [selectedPatientId, setSelectedPatientId] = useState('')
   const [modal, setModal] = useState<ModalName | null>(null)
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -363,8 +373,7 @@ export function DentalDashboard({
     return selectedBranch
   }
 
-  async function updatePatient(patient: Patient) {
-    const nextStatus = patient.status === 'active' ? 'inactive' : 'active'
+  async function updatePatient(patient: Patient, nextStatus: Patient['status']) {
     try {
       const result = await setClinicPatientStatus(patient.id, nextStatus)
       if (!result.ok) {
@@ -441,6 +450,13 @@ export function DentalDashboard({
           name,
           phone: value('phone'),
           dateOfBirth: value('dateOfBirth'),
+          sex: value('sex'),
+          email: value('email'),
+          address: value('address'),
+          nationalId: value('nationalId'),
+          emergencyContactName: value('emergencyContactName'),
+          emergencyContactPhone: value('emergencyContactPhone'),
+          emergencyContactRelationship: value('emergencyContactRelationship'),
         })
         if (!result.ok) throw new Error(result.error)
         showToast('Patient added to the clinic database.')
@@ -610,14 +626,20 @@ export function DentalDashboard({
               ? <div className="workspace-empty"><CalendarDays /><strong>No upcoming appointments</strong><span>Schedule an appointment when you’re ready.</span></div>
               : <AppointmentRows appointments={recentAppointments} onStatusChange={changeAppointmentStatus} />}
           </section>
-          <footer className="dashboard-footer"><span><ShieldCheck /> Clinic records are stored in the secured organization database.</span><span>© 2026 Northstar Health <i /> <button onClick={() => setActive('Settings')}>Clinic settings</button></span></footer>
+          <footer className="dashboard-footer"><span><ShieldCheck /> Clinic records are stored in the secured organization database.</span><span>© 2026 Tibeb Health <i /> <button onClick={() => setActive('Settings')}>Clinic settings</button></span></footer>
         </>}
 
         {active === 'Patients' && <section className="workspace-module">
+          {selectedPatientId ? <PatientClinicalChart
+            patientId={selectedPatientId}
+            branchId={patients.find((patient) => patient.id === selectedPatientId)?.registeredBranchId ?? branchForRecord().id}
+            onClose={() => setSelectedPatientId('')}
+          /> : <>
           <div className="module-heading"><div><div className="eyebrow">CLINIC WORKSPACE</div><h1>Patients</h1><p>Manage patient profiles belonging to this clinic.</p></div><button className="primary-button" onClick={openNewPatient}><Plus /> Add patient</button></div>
           <section className="panel workspace-panel"><div className="panel-header"><div><div className="panel-title-row"><h2>Patient directory</h2><span className="count-chip">{visiblePatients.length}</span></div><p>Search filters by name, patient number, or phone.</p></div></div>
-            <PatientTable patients={visiblePatients} onStatusChange={updatePatient} />
+            <PatientTable patients={visiblePatients} onStatusChange={updatePatient} onOpen={(patient) => setSelectedPatientId(patient.id)} />
           </section>
+          </>}
         </section>}
 
         {active === 'Appointments' && <section className="workspace-module">
@@ -681,6 +703,11 @@ export function DentalDashboard({
                 <label className="admin-field">Patient name<input name="name" required maxLength={120} autoFocus /></label>
                 <label className="admin-field">Patient number<input name="patientNumber" placeholder="Leave blank to generate one" maxLength={32} /></label>
                 <div className="admin-field-row"><label className="admin-field">Phone<input name="phone" type="tel" maxLength={40} /></label><label className="admin-field">Date of birth<input name="dateOfBirth" type="date" /></label></div>
+                <div className="admin-field-row"><label className="admin-field">Gender<select name="sex" defaultValue=""><option value="">Not provided</option><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option><option value="not_specified">Prefer not to say</option></select></label><label className="admin-field">Email<input name="email" type="email" maxLength={254} /></label></div>
+                <label className="admin-field">Address<input name="address" maxLength={500} /></label>
+                <div className="admin-field-row"><label className="admin-field">Emergency contact<input name="emergencyContactName" maxLength={120} /></label><label className="admin-field">Emergency phone<input name="emergencyContactPhone" type="tel" maxLength={40} /></label></div>
+                <label className="admin-field">Emergency contact relationship<input name="emergencyContactRelationship" maxLength={80} /></label>
+                <label className="admin-field">National ID (optional)<input name="nationalId" maxLength={80} /></label>
               </>}
               {modal === 'appointment' && <>
                 <label className="admin-field">Patient<select name="patientId" required defaultValue=""><option value="" disabled>Select a patient</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name} · {patient.patientNumber}</option>)}</select></label>

@@ -8,5 +8,6 @@ export interface ManagedClinic {
   branchName: string
   plan: ClinicPlan
   status: ClinicStatus
+  administratorActive: boolean
   createdAt: string
 }

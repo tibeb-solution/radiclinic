@@ -7,8 +7,15 @@ Create a Supabase project, then open **SQL Editor** and run these files in order
 - `migrations/001_phase1_foundation.sql`
 - `migrations/002_auth_and_tenant_guards.sql`
 - `migrations/003_api_role_grants.sql`
+- `migrations/004_phase2_clinical_workflow.sql`
 
-The first migration creates the Phase 1 tables, private document bucket, helper functions, and baseline row-level security. The second adds first-login password setup, clinic support requests, branch-aware tenant checks, and cross-organization reference guards. The third grants the required PostgREST table privileges while leaving row-level security enabled. If migrations 001 and 002 have already been applied, run only migration 003.
+The first migration creates the Phase 1 tables, private document bucket, helper functions, and baseline row-level security. The second adds first-login password setup, clinic support requests, branch-aware tenant checks, and cross-organization reference guards. The third grants the required PostgREST table privileges while leaving row-level security enabled. The fourth adds the Phase 2 patient chart and clinical workflow tables, constraints, RPCs, and row-level security policies without replacing existing patient data.
+
+If migrations 001–003 have already been applied, run only `004_phase2_clinical_workflow.sql` from the Supabase SQL Editor. Copy the complete file contents into a new SQL Editor query and run it once. Do not rerun it if it succeeds.
+
+Phase 2 chart features include editable patient demographics, append-only medical and dental history, encounter examinations and vitals, FDI tooth findings, diagnoses, treatment-plan items, performed procedures, prescriptions, consent records, clinical review and version history, and private patient attachments. Consent linked to a treatment item authorizes that item; escalated clinical records are restricted to central clinical supervisors and organization administrators. This is a working clinical-chart baseline, not a complete EHR: cross-clinic sharing workflows, configurable approval queues, inventory/lab/billing integrations, and jurisdiction-specific compliance review remain outstanding. Test role and branch isolation against the live Supabase project before using real patient data.
+
+Platform administrators can pause or restore a clinic administrator's access from the clinic list. Pausing deactivates the clinic membership, blocking workspace and database access without deleting the authentication user or any clinic data. Clinic administrators can pause and restore their staff from the team directory.
 
 ## 2. Configure the web app
 

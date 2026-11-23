@@ -19,14 +19,14 @@ import {
   UsersRound,
   X,
 } from 'lucide-react'
-import { createClinic, logout, resetClinicPassword, updateClinic } from '@/app/auth-actions'
+import { createClinic, logout, resetClinicPassword, setClinicAdminActive, updateClinic } from '@/app/auth-actions'
 import type { ManagedClinic } from '@/lib/clinic-types'
 
 type PublicClinic = ManagedClinic
 type CredentialNotice = { email: string; password: string }
 
 function Brand() {
-  return <Link className="portal-brand" href="/"><span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span><span className="brand-name">molar<span>care</span></span></Link>
+  return <Link className="portal-brand" href="/"><span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span><span className="brand-name">Clinic<span> Care</span></span></Link>
 }
 
 export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic[]; adminEmail: string }) {
@@ -38,6 +38,7 @@ export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [saving, setSaving] = useState(false)
+  const [updatingAdminId, setUpdatingAdminId] = useState('')
   const filteredClinics = clinics.filter((clinic) =>
     `${clinic.name} ${clinic.email}`.toLowerCase().includes(query.toLowerCase())
   )
@@ -127,24 +128,49 @@ export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic
     }
   }
 
+  async function toggleClinicAdminAccess(clinic: PublicClinic) {
+    const active = !clinic.administratorActive
+    if (!active && !window.confirm(
+      `Pause administrator access for ${clinic.name}? Their clinic membership will be disabled, but all clinic data will be retained.`
+    )) return
+
+    setError('')
+    setUpdatingAdminId(clinic.id)
+    try {
+      const result = await setClinicAdminActive(clinic.id, active)
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      setNotice(active
+        ? `Administrator access restored for ${clinic.name}.`
+        : `Administrator access paused for ${clinic.name}. Clinic data was retained.`)
+      router.refresh()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not update clinic administrator access.')
+    } finally {
+      setUpdatingAdminId('')
+    }
+  }
+
   return <div className="admin-page">
     <header className="admin-topbar"><Brand /><div className="admin-topbar-right"><span className="admin-env"><span /> Platform console</span><button className="admin-icon-button" aria-label="Help"><CircleHelp /></button><Link className="admin-credentials-link" href="/admin/account"><KeyRound /> Credentials</Link><div className="admin-user"><span className="admin-user-avatar">PA</span><span><strong>Platform Admin</strong><small>{adminEmail}</small></span><ChevronDown /></div><form action={logout.bind(null, 'platform')}><button className="admin-icon-button" aria-label="Sign out" title="Sign out"><LogOut /></button></form></div></header>
     <div className="admin-layout">
-      <aside className="admin-sidebar"><div className="admin-sidebar-label">PLATFORM</div><Link className="admin-side-link admin-side-link-active" href="/admin"><Building2 /><span>Clinics</span><span className="admin-side-count">{clinics.length}</span></Link><div className="admin-sidebar-bottom"><div className="platform-provider"><span className="platform-provider-icon"><ShieldCheck /></span><span><small>CLINIC PLATFORM</small><strong>Northstar Health</strong></span></div><Link className="admin-back-link" href="/login">Clinic sign in <ArrowRight /></Link></div></aside>
+      <aside className="admin-sidebar"><div className="admin-sidebar-label">PLATFORM</div><Link className="admin-side-link admin-side-link-active" href="/admin"><Building2 /><span>Clinics</span><span className="admin-side-count">{clinics.length}</span></Link><div className="admin-sidebar-bottom"><div className="platform-provider"><span className="platform-provider-icon"><ShieldCheck /></span><span><small>CLINIC PLATFORM</small><strong>Tibeb Health</strong></span></div><Link className="admin-back-link" href="/login">Clinic sign in <ArrowRight /></Link></div></aside>
       <main className="admin-main"><div className="admin-content">
         <div className="admin-breadcrumb"><span>Platform</span><span>/</span><strong>Clinics</strong></div>
         <div className="admin-heading-row"><div><div className="admin-kicker">PLATFORM ADMINISTRATION</div><h1>Clinic organizations</h1><p>Create clinic accounts, manage access, and issue temporary credentials.</p></div><button className="admin-primary" onClick={openCreate}><Plus /> Add clinic</button></div>
-        <div className="prototype-callout" role="note"><span className="prototype-callout-icon"><LockKeyhole /></span><span><strong>Supabase-backed clinic access</strong><small>Clinic accounts and organization records are stored in Supabase. Temporary passwords are shown once and must be changed at first sign-in.</small></span><span className="prototype-tag">SECURE</span></div>
+        <div className="prototype-callout" role="note"><span className="prototype-callout-icon"><LockKeyhole /></span><span><strong>Supabase-backed clinic access</strong><small>Clinic accounts and organization records are stored in Supabase. Temporary passwords are shown once and must be changed at first sign-in. Pausing an administrator retains all clinic data.</small></span><span className="prototype-tag">SECURE</span></div>
         <section className="admin-stats" aria-label="Platform summary">
           <article><span>Clinic organizations</span><strong>{clinics.length}</strong><small>Stored in Supabase</small><i className="admin-stat-icon"><Building2 /></i></article>
-          <article><span>Active clinics</span><strong>{clinics.filter((clinic) => clinic.status === 'active').length}</strong><small>Currently able to sign in</small><i className="admin-stat-icon green"><Check /></i></article>
+          <article><span>Active clinics</span><strong>{clinics.filter((clinic) => clinic.status === 'active' && clinic.administratorActive).length}</strong><small>Clinic and administrator access enabled</small><i className="admin-stat-icon green"><Check /></i></article>
           <article><span>Clinic administrators</span><strong>{clinics.length}</strong><small>One per organization</small><i className="admin-stat-icon blue"><UsersRound /></i></article>
           <article><span>Suspended clinics</span><strong>{clinics.filter((clinic) => clinic.status === 'suspended').length}</strong><small>Access disabled</small><i className="admin-stat-icon amber"><LockKeyhole /></i></article>
         </section>
         {credential && <section className="credential-issued" role="status"><div><strong>Temporary credentials — share securely</strong><p>Send to {credential.email}. The clinic administrator must choose a new password at first sign-in.</p><code>{credential.password}</code></div><button className="admin-icon-button" onClick={() => setCredential(null)} aria-label="Dismiss credentials"><X /></button></section>}
         {error && <p className="admin-error" role="alert">{error}</p>}
         <section className="admin-clinic-panel"><div className="admin-list-head"><div><div className="admin-list-title"><h2>All clinics</h2><span>{clinics.length}</span></div><p>Supabase organization records</p></div><div className="admin-list-actions"><label className="admin-search"><Search /><input aria-label="Search clinics" placeholder="Search clinics" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div></div>
-          <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>CLINIC</th><th>ORGANIZATION ADMIN</th><th>BRANCH</th><th>PLAN</th><th>STATUS</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{filteredClinics.map((clinic) => <tr key={clinic.id}><td><div className="admin-clinic-cell"><span className="clinic-initials initials-mint">{clinic.name.slice(0, 2).toUpperCase()}</span><span><strong>{clinic.name}</strong><small>Added {new Date(clinic.createdAt).toLocaleDateString()}</small></span></div></td><td><span className="clinic-contact"><strong>{clinic.email}</strong><small>Clinic administrator</small></span></td><td>{clinic.branchName}</td><td><span className="plan-chip">{clinic.plan}</span></td><td><span className={`clinic-status clinic-status-${clinic.status}`}><i />{clinic.status === 'active' ? 'Active' : 'Suspended'}</span></td><td><div className="admin-row-actions"><button className="admin-row-menu" aria-label={`Edit ${clinic.name}`} title="Edit clinic" onClick={() => openEdit(clinic)}><Pencil /></button><button className="admin-row-menu" aria-label={`Issue new password for ${clinic.name}`} title="Issue temporary password" onClick={() => void issuePassword(clinic)}><KeyRound /></button></div></td></tr>)}</tbody></table>{filteredClinics.length === 0 && <div className="admin-no-results">No clinics match “{query}”.</div>}</div>
+          <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>CLINIC</th><th>ORGANIZATION ADMIN</th><th>BRANCH</th><th>PLAN</th><th>STATUS</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{filteredClinics.map((clinic) => <tr key={clinic.id}><td><div className="admin-clinic-cell"><span className="clinic-initials initials-mint">{clinic.name.slice(0, 2).toUpperCase()}</span><span><strong>{clinic.name}</strong><small>Added {new Date(clinic.createdAt).toLocaleDateString()}</small></span></div></td><td><span className="clinic-contact"><strong>{clinic.email}</strong><small className={clinic.administratorActive ? 'clinic-admin-access-active' : 'clinic-admin-access-paused'}>Administrator access · {clinic.administratorActive ? 'Active' : 'Paused'}</small></span></td><td>{clinic.branchName}</td><td><span className="plan-chip">{clinic.plan}</span></td><td><span className={`clinic-status clinic-status-${clinic.status}`}><i />{clinic.status === 'active' ? 'Active' : 'Suspended'}</span></td><td><div className="admin-row-actions"><button className="admin-row-menu" aria-label={`Edit ${clinic.name}`} title="Edit clinic" onClick={() => openEdit(clinic)}><Pencil /></button><button className="admin-row-menu" aria-label={`Issue new password for ${clinic.name}`} title="Issue temporary password" onClick={() => void issuePassword(clinic)}><KeyRound /></button><button className="admin-row-menu" aria-label={`${clinic.administratorActive ? 'Pause' : 'Restore'} administrator access for ${clinic.name}`} title={`${clinic.administratorActive ? 'Pause' : 'Restore'} administrator access`} disabled={updatingAdminId === clinic.id} onClick={() => void toggleClinicAdminAccess(clinic)}>{clinic.administratorActive ? <LockKeyhole /> : <Check />}</button></div></td></tr>)}</tbody></table>{filteredClinics.length === 0 && <div className="admin-no-results">No clinics match “{query}”.</div>}</div>
           <div className="admin-table-footer"><span>Showing {filteredClinics.length} clinic{filteredClinics.length === 1 ? '' : 's'} <span className="admin-footer-muted">· Supabase</span></span></div>
         </section>
         {notice && <div className="admin-toast" role="status"><ShieldCheck />{notice}<button aria-label="Dismiss message" onClick={() => setNotice('')}><X /></button></div>}

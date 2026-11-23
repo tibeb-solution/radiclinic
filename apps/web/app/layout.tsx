@@ -3,8 +3,8 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Molarcare — Dental Clinic Workspace',
-  description: 'A secure, organization-centered workspace for modern dental clinics.',
+  title: 'Clinic Care — Dental Clinic Workspace',
+  description: 'A secure, organization-centered workspace by Tibeb Health.',
   generator: 'v0.app',
   icons: {
     icon: [

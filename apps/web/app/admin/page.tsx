@@ -4,7 +4,7 @@ import { getPlatformSession, listManagedClinics } from '@/app/auth-actions'
 import { ClinicAdminPage } from '@/components/clinic-admin-page'
 
 export const metadata: Metadata = {
-  title: 'Clinic organizations | Molarcare Platform',
+  title: 'Clinic organizations | Clinic Care',
   description: 'Manage clinic organizations and platform access.',
 }
 

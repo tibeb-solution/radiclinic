@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { type FormEvent, useState } from 'react'
 import { ArrowLeft, ArrowRight, Building2, CheckCircle2, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react'
 import { loginClinic, loginPlatformAdmin } from '@/app/auth-actions'
+import { PasswordInput } from '@/components/password-input'
 
 function SignInForm({ platform = false }: { platform?: boolean }) {
   const router = useRouter()
@@ -35,7 +36,7 @@ function SignInForm({ platform = false }: { platform?: boolean }) {
 
   return <form className="clinic-login-form" onSubmit={submit}>
     <label className="login-field">Work email<input name="email" type="email" autoComplete="username" placeholder="you@yourclinic.com" required /></label>
-    <label className="login-field">Password<input name="password" type="password" autoComplete="current-password" placeholder="Enter your password" required /></label>
+    <label className="login-field">Password<PasswordInput name="password" autoComplete="current-password" placeholder="Enter your password" required /></label>
     {error && <p className="login-error" role="alert">{error}</p>}
     <button className="login-submit" type="submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'} <ArrowRight /></button>
   </form>
@@ -45,8 +46,8 @@ function LoginShell({ platform = false }: { platform?: boolean }) {
   const title = platform ? 'Platform administrator' : 'Clinic workspace'
   return <main className="clinic-login-page">
     <div className="login-topline">
-      <Link className="portal-brand" href="/"><span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span><span className="brand-name">molar<span>care</span></span></Link>
-      <span className="login-powered"><Sparkles /> Northstar Health platform</span>
+      <Link className="portal-brand" href="/"><span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span><span className="brand-name">Clinic<span> Care</span></span></Link>
+      <span className="login-powered"><Sparkles /> Tibeb Health platform</span>
     </div>
     <div className="login-layout">
       <section className="login-story">
@@ -67,10 +68,10 @@ function LoginShell({ platform = false }: { platform?: boolean }) {
         <div className="login-card-heading"><h2 id="clinic-signin-title">{platform ? 'Platform administrator sign in' : 'Sign in to your clinic'}</h2><p>{platform ? 'Use your Supabase Auth platform administrator account.' : 'Use the credentials provided by your clinic administrator.'}</p></div>
         <SignInForm platform={platform} />
         <p className="login-support">{platform ? <>Clinic team? <Link href="/login">Go to clinic sign in</Link></> : <>Platform administrator? <Link href="/admin/login">Sign in to the platform console</Link></>}</p>
-        <div className="login-ownership"><LockKeyhole /> Secure authentication <strong>Northstar Health</strong></div>
+        <div className="login-ownership"><LockKeyhole /> Secure authentication <strong>Tibeb Health</strong></div>
       </section>
     </div>
-    <footer className="login-footer"><Link href="/"><ArrowLeft /> Back to Molarcare</Link><span>© 2026 Northstar Health <i /> Secure clinic platform</span></footer>
+    <footer className="login-footer"><Link href="/"><ArrowLeft /> Back to Clinic Care</Link><span>© 2026 Tibeb Health <i /> Secure clinic platform</span></footer>
   </main>
 }
 
