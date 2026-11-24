@@ -467,10 +467,9 @@ export function DentalDashboard({
     try {
       if (modal === 'patient') {
         const name = value('name')
-        const patientNumber = value('patientNumber') || `PT-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
         const result = await createClinicPatient({
           branchId: branchForRecord().id,
-          patientNumber,
+          patientNumber: value('patientNumber'),
           name,
           phone: value('phone'),
           dateOfBirth: value('dateOfBirth'),
@@ -749,12 +748,12 @@ export function DentalDashboard({
             : <form onSubmit={submitModal}>
               {modal === 'patient' && <>
                 <label className="admin-field">Patient name<input name="name" required maxLength={120} autoFocus /></label>
-                <label className="admin-field">Patient number<input name="patientNumber" placeholder="Leave blank to generate one" maxLength={32} /></label>
-                <div className="admin-field-row"><label className="admin-field">Phone<input name="phone" type="tel" maxLength={40} /></label><label className="admin-field">Date of birth<input name="dateOfBirth" type="date" /></label></div>
-                <div className="admin-field-row"><label className="admin-field">Gender<select name="sex" defaultValue=""><option value="">Not provided</option><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option><option value="not_specified">Prefer not to say</option></select></label><label className="admin-field">Email<input name="email" type="email" maxLength={254} /></label></div>
-                <label className="admin-field">Address<input name="address" maxLength={500} /></label>
-                <div className="admin-field-row"><label className="admin-field">Emergency contact<input name="emergencyContactName" maxLength={120} /></label><label className="admin-field">Emergency phone<input name="emergencyContactPhone" type="tel" maxLength={40} /></label></div>
-                <label className="admin-field">Emergency contact relationship<input name="emergencyContactRelationship" maxLength={80} /></label>
+                <label className="admin-field">Patient number (optional)<input name="patientNumber" placeholder="Leave blank to generate one" maxLength={32} /></label>
+                <div className="admin-field-row"><label className="admin-field">Phone (optional)<input name="phone" type="tel" maxLength={40} /></label><label className="admin-field">Date of birth (optional)<input name="dateOfBirth" type="date" /></label></div>
+                <div className="admin-field-row"><label className="admin-field">Gender (optional)<select name="sex" defaultValue=""><option value="">Not provided</option><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option><option value="not_specified">Prefer not to say</option></select></label><label className="admin-field">Email (optional)<input name="email" type="email" maxLength={254} /></label></div>
+                <label className="admin-field">Address (optional)<input name="address" maxLength={500} /></label>
+                <div className="admin-field-row"><label className="admin-field">Emergency contact (optional)<input name="emergencyContactName" maxLength={120} /></label><label className="admin-field">Emergency phone (optional)<input name="emergencyContactPhone" type="tel" maxLength={40} /></label></div>
+                <label className="admin-field">Emergency contact relationship (optional)<input name="emergencyContactRelationship" maxLength={80} /></label>
                 <label className="admin-field">National ID (optional)<input name="nationalId" maxLength={80} /></label>
               </>}
               {modal === 'appointment' && <>

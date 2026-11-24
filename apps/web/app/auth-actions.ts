@@ -418,10 +418,10 @@ export async function setClinicBranchStatus(branchId: string, status: 'active' |
 
 export async function createClinicPatient(input: {
   branchId: string
-  patientNumber: string
   name: string
-  phone: string
-  dateOfBirth: string
+  patientNumber?: string
+  phone?: string
+  dateOfBirth?: string
   sex?: string
   email?: string
   address?: string
@@ -432,10 +432,10 @@ export async function createClinicPatient(input: {
 }): Promise<MutationResult<Patient>> {
   const account = await clinicAccount()
   if (!account) return { ok: false, error: 'Complete account setup and sign in to an active clinic first.' }
-  const patientNumber = input.patientNumber.trim()
+  const patientNumber = input.patientNumber?.trim() || `PT-${randomUUID().slice(0, 8).toUpperCase()}`
   const name = input.name.trim()
-  if (!input.branchId || !name || name.length > 120 || !patientNumber || patientNumber.length > 32) {
-    return { ok: false, error: 'Enter a patient name, patient number, and active branch.' }
+  if (!input.branchId || !name || name.length > 120 || patientNumber.length > 32) {
+    return { ok: false, error: 'Enter a patient name and choose an active branch.' }
   }
   const email = input.email?.trim().toLowerCase() ?? ''
   if (email && !validEmail(email)) return { ok: false, error: 'Enter a valid patient email address.' }
@@ -450,7 +450,7 @@ export async function createClinicPatient(input: {
     registered_branch_id: input.branchId,
     patient_number: patientNumber,
     full_name: name,
-    phone: input.phone.trim() || null,
+    phone: input.phone?.trim() || null,
     date_of_birth: input.dateOfBirth || null,
     sex: sex ?? null,
     email: email || null,
