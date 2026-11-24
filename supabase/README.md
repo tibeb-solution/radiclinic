@@ -17,6 +17,8 @@ Phase 2 chart features include editable patient demographics, append-only medica
 
 Platform administrators can pause or restore a clinic administrator's access from the clinic list. Pausing deactivates the clinic membership, blocking workspace and database access without deleting the authentication user or any clinic data. Clinic administrators can pause and restore their staff from the team directory.
 
+Platform administrators can permanently delete a clinic organization from the clinic list by selecting its delete action and confirming the exact clinic name. This removes its organization-scoped database records and clinical-document files, and writes a platform audit event. Clinic member Auth accounts are deleted only when they have no other organization or branch memberships; accounts still referenced by retained records can remain but lose access to the deleted clinic. Deleting a user in Supabase Auth alone does not delete the organization, so that organization remains listed until it is deleted from the platform console.
+
 ## 2. Configure the web app
 
 Copy `apps/web/.env.example` to `apps/web/.env.local`, then replace:

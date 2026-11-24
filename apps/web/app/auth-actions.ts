@@ -137,6 +137,37 @@ async function writePlatformAuditEvent(
   return error?.message ?? null
 }
 
+async function listStoragePaths(
+  bucket: ReturnType<ReturnType<typeof createSupabaseAdminClient>['storage']['from']>,
+  directory: string
+): Promise<{ paths: string[] } | { error: string }> {
+  const paths: string[] = []
+  const pageSize = 100
+
+  async function visit(folder: string): Promise<string | null> {
+    let offset = 0
+    while (true) {
+      const { data, error } = await bucket.list(folder, { limit: pageSize, offset })
+      if (error) return error.message
+      const entries = data ?? []
+      for (const entry of entries) {
+        const path = `${folder}/${entry.name}`
+        if (entry.id === null) {
+          const nestedError = await visit(path)
+          if (nestedError) return nestedError
+        } else {
+          paths.push(path)
+        }
+      }
+      if (entries.length < pageSize) return null
+      offset += entries.length
+    }
+  }
+
+  const error = await visit(directory)
+  return error ? { error } : { paths }
+}
+
 export async function getClinicWorkspaceData(): Promise<WorkspaceResult> {
   const account = await authenticatedAccount('clinic')
   if (!account?.clinicId || account.mustChangePassword) {
@@ -830,6 +861,129 @@ export async function setClinicAdminActive(id: string, active: boolean): Promise
   if (auditError) return { ok: false, error: `Access was updated, but its audit event failed: ${auditError}` }
   revalidatePath('/admin')
   return { ok: true }
+}
+
+export async function deleteClinicAccount(
+  id: string,
+  confirmationName: string
+): Promise<{ ok: true; warning?: string } | { ok: false; error: string }> {
+  const platformAccount = await authenticatedAccount('platform')
+  if (!platformAccount) {
+    return { ok: false, error: 'You must sign in as a platform administrator to delete clinics.' }
+  }
+  if (!id || !confirmationName.trim()) {
+    return { ok: false, error: 'Choose a clinic and enter its name to confirm deletion.' }
+  }
+
+  const admin = createSupabaseAdminClient()
+  const { data: organization, error: organizationError } = await admin
+    .from('organizations')
+    .select('id, name, status')
+    .eq('id', id)
+    .maybeSingle()
+  if (organizationError) return { ok: false, error: organizationError.message }
+  if (!organization) return { ok: false, error: 'Clinic not found. Refresh the clinic list.' }
+  if (confirmationName.trim() !== organization.name) {
+    return { ok: false, error: 'The clinic name does not match. No data was deleted.' }
+  }
+
+  const { data: memberships, error: membershipsError } = await admin
+    .from('organization_members')
+    .select('user_id')
+    .eq('organization_id', id)
+  if (membershipsError) return { ok: false, error: `Could not load clinic members: ${membershipsError.message}` }
+
+  const storage = admin.storage.from('clinical-documents')
+  const storageResult = await listStoragePaths(storage, id)
+  if ('error' in storageResult) {
+    return { ok: false, error: `Could not inspect clinic files; no clinic records were deleted: ${storageResult.error}` }
+  }
+  for (let offset = 0; offset < storageResult.paths.length; offset += 100) {
+    const { error } = await storage.remove(storageResult.paths.slice(offset, offset + 100))
+    if (error) {
+      return {
+        ok: false,
+        error: `Could not remove all clinic files; clinic records were retained. Some files may already have been removed. Storage error: ${error.message}`,
+      }
+    }
+  }
+
+  const { data: deletedOrganization, error: deleteError } = await admin
+    .from('organizations')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+  if (deleteError) {
+    return {
+      ok: false,
+      error: `Clinic files were removed, but the clinic records could not be deleted: ${deleteError.message}`,
+    }
+  }
+  if (!deletedOrganization) {
+    return { ok: false, error: 'Clinic files were removed, but the clinic record was already deleted or changed.' }
+  }
+
+  const warnings: string[] = []
+  const { error: auditError } = await admin.from('audit_events').insert({
+    organization_id: null,
+    actor_id: platformAccount.id,
+    action: 'organization.deleted',
+    entity_type: 'organization',
+    entity_id: id,
+    after_data: { name: organization.name, status: organization.status },
+  })
+  if (auditError) warnings.push(`the platform audit event could not be recorded (${auditError.message})`)
+
+  const userIds = [...new Set((memberships ?? []).map((membership) => membership.user_id))]
+  for (const userId of userIds) {
+    if (userId === platformAccount.id) continue
+
+    const { data: otherMembership, error: otherMembershipError } = await admin
+      .from('organization_members')
+      .select('organization_id')
+      .eq('user_id', userId)
+      .limit(1)
+      .maybeSingle()
+    if (otherMembershipError) {
+      warnings.push(`a former clinic member account could not be checked (${otherMembershipError.message})`)
+      continue
+    }
+    if (otherMembership) continue
+
+    const { data: otherBranchMembership, error: branchMembershipError } = await admin
+      .from('branch_memberships')
+      .select('branch_id')
+      .eq('user_id', userId)
+      .limit(1)
+      .maybeSingle()
+    if (branchMembershipError) {
+      warnings.push(`a former clinic member account could not be checked (${branchMembershipError.message})`)
+      continue
+    }
+    if (otherBranchMembership) continue
+
+    const { data: profile, error: profileError } = await admin
+      .from('profiles')
+      .select('is_platform_admin')
+      .eq('id', userId)
+      .maybeSingle()
+    if (profileError) {
+      warnings.push(`a former clinic member account could not be checked (${profileError.message})`)
+      continue
+    }
+    if (!profile || profile.is_platform_admin) continue
+
+    const { error: userDeleteError } = await admin.auth.admin.deleteUser(userId)
+    if (userDeleteError) {
+      warnings.push('some former clinic member login accounts were retained because they are referenced by other records')
+    }
+  }
+
+  revalidatePath('/admin')
+  return warnings.length
+    ? { ok: true, warning: `Clinic “${organization.name}” and its files were deleted, but ${warnings.join('; ')}. Those accounts no longer have access to this clinic.` }
+    : { ok: true }
 }
 
 export async function loginClinic(email: string, password: string): Promise<ActionResult> {

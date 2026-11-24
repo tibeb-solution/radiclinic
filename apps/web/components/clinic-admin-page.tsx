@@ -16,10 +16,11 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Trash2,
   UsersRound,
   X,
 } from 'lucide-react'
-import { createClinic, logout, resetClinicPassword, setClinicAdminActive, updateClinic } from '@/app/auth-actions'
+import { createClinic, deleteClinicAccount, logout, resetClinicPassword, setClinicAdminActive, updateClinic } from '@/app/auth-actions'
 import type { ManagedClinic } from '@/lib/clinic-types'
 
 type PublicClinic = ManagedClinic
@@ -33,6 +34,8 @@ export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic
   const router = useRouter()
   const [dialog, setDialog] = useState<'create' | 'edit' | null>(null)
   const [editing, setEditing] = useState<PublicClinic | null>(null)
+  const [deletingClinic, setDeletingClinic] = useState<PublicClinic | null>(null)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
   const [credential, setCredential] = useState<CredentialNotice | null>(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -54,6 +57,12 @@ export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic
     setError('')
     setEditing(clinic)
     setDialog('edit')
+  }
+
+  function openDelete(clinic: PublicClinic) {
+    setError('')
+    setDeleteConfirmation('')
+    setDeletingClinic(clinic)
   }
 
   async function submitCreate(event: FormEvent<HTMLFormElement>) {
@@ -153,6 +162,32 @@ export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic
     }
   }
 
+  async function submitDelete(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!deletingClinic) return
+    setError('')
+    setSaving(true)
+    const form = new FormData(event.currentTarget)
+    try {
+      const result = await deleteClinicAccount(
+        deletingClinic.id,
+        String(form.get('confirmationName') ?? '')
+      )
+      if (!result.ok) {
+        setError(result.error)
+        return
+      }
+      setDeletingClinic(null)
+      setDeleteConfirmation('')
+      setNotice(result.warning ?? `Clinic organization “${deletingClinic.name}” was permanently deleted.`)
+      router.refresh()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Clinic deletion failed. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return <div className="admin-page">
     <header className="admin-topbar"><Brand /><div className="admin-topbar-right"><span className="admin-env"><span /> Platform console</span><button className="admin-icon-button" aria-label="Help"><CircleHelp /></button><Link className="admin-credentials-link" href="/admin/account"><KeyRound /> Credentials</Link><div className="admin-user"><span className="admin-user-avatar">PA</span><span><strong>Platform Admin</strong><small>{adminEmail}</small></span><ChevronDown /></div><form action={logout.bind(null, 'platform')}><button className="admin-icon-button" aria-label="Sign out" title="Sign out"><LogOut /></button></form></div></header>
     <div className="admin-layout">
@@ -164,13 +199,13 @@ export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic
         <section className="admin-stats" aria-label="Platform summary">
           <article><span>Clinic organizations</span><strong>{clinics.length}</strong><small>Stored in Supabase</small><i className="admin-stat-icon"><Building2 /></i></article>
           <article><span>Active clinics</span><strong>{clinics.filter((clinic) => clinic.status === 'active' && clinic.administratorActive).length}</strong><small>Clinic and administrator access enabled</small><i className="admin-stat-icon green"><Check /></i></article>
-          <article><span>Clinic administrators</span><strong>{clinics.length}</strong><small>One per organization</small><i className="admin-stat-icon blue"><UsersRound /></i></article>
+          <article><span>Clinic administrators</span><strong>{clinics.filter((clinic) => clinic.email).length}</strong><small>Linked administrator accounts</small><i className="admin-stat-icon blue"><UsersRound /></i></article>
           <article><span>Suspended clinics</span><strong>{clinics.filter((clinic) => clinic.status === 'suspended').length}</strong><small>Access disabled</small><i className="admin-stat-icon amber"><LockKeyhole /></i></article>
         </section>
         {credential && <section className="credential-issued" role="status"><div><strong>Temporary credentials — share securely</strong><p>Send to {credential.email}. The clinic administrator must choose a new password at first sign-in.</p><code>{credential.password}</code></div><button className="admin-icon-button" onClick={() => setCredential(null)} aria-label="Dismiss credentials"><X /></button></section>}
         {error && <p className="admin-error" role="alert">{error}</p>}
         <section className="admin-clinic-panel"><div className="admin-list-head"><div><div className="admin-list-title"><h2>All clinics</h2><span>{clinics.length}</span></div><p>Supabase organization records</p></div><div className="admin-list-actions"><label className="admin-search"><Search /><input aria-label="Search clinics" placeholder="Search clinics" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div></div>
-          <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>CLINIC</th><th>ORGANIZATION ADMIN</th><th>BRANCH</th><th>PLAN</th><th>STATUS</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{filteredClinics.map((clinic) => <tr key={clinic.id}><td><div className="admin-clinic-cell"><span className="clinic-initials initials-mint">{clinic.name.slice(0, 2).toUpperCase()}</span><span><strong>{clinic.name}</strong><small>Added {new Date(clinic.createdAt).toLocaleDateString()}</small></span></div></td><td><span className="clinic-contact"><strong>{clinic.email}</strong><small className={clinic.administratorActive ? 'clinic-admin-access-active' : 'clinic-admin-access-paused'}>Administrator access · {clinic.administratorActive ? 'Active' : 'Paused'}</small></span></td><td>{clinic.branchName}</td><td><span className="plan-chip">{clinic.plan}</span></td><td><span className={`clinic-status clinic-status-${clinic.status}`}><i />{clinic.status === 'active' ? 'Active' : 'Suspended'}</span></td><td><div className="admin-row-actions"><button className="admin-row-menu" aria-label={`Edit ${clinic.name}`} title="Edit clinic" onClick={() => openEdit(clinic)}><Pencil /></button><button className="admin-row-menu" aria-label={`Issue new password for ${clinic.name}`} title="Issue temporary password" onClick={() => void issuePassword(clinic)}><KeyRound /></button><button className="admin-row-menu" aria-label={`${clinic.administratorActive ? 'Pause' : 'Restore'} administrator access for ${clinic.name}`} title={`${clinic.administratorActive ? 'Pause' : 'Restore'} administrator access`} disabled={updatingAdminId === clinic.id} onClick={() => void toggleClinicAdminAccess(clinic)}>{clinic.administratorActive ? <LockKeyhole /> : <Check />}</button></div></td></tr>)}</tbody></table>{filteredClinics.length === 0 && <div className="admin-no-results">No clinics match “{query}”.</div>}</div>
+          <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>CLINIC</th><th>ORGANIZATION ADMIN</th><th>BRANCH</th><th>PLAN</th><th>STATUS</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{filteredClinics.map((clinic) => <tr key={clinic.id}><td><div className="admin-clinic-cell"><span className="clinic-initials initials-mint">{clinic.name.slice(0, 2).toUpperCase()}</span><span><strong>{clinic.name}</strong><small>Added {new Date(clinic.createdAt).toLocaleDateString()}</small></span></div></td><td><span className="clinic-contact"><strong>{clinic.email || '—'}</strong><small className={clinic.administratorActive ? 'clinic-admin-access-active' : 'clinic-admin-access-paused'}>{clinic.email ? `Administrator access · ${clinic.administratorActive ? 'Active' : 'Paused'}` : 'No linked administrator account'}</small></span></td><td>{clinic.branchName}</td><td><span className="plan-chip">{clinic.plan}</span></td><td><span className={`clinic-status clinic-status-${clinic.status}`}><i />{clinic.status === 'active' ? 'Active' : 'Suspended'}</span></td><td><div className="admin-row-actions"><button className="admin-row-menu" aria-label={`Edit ${clinic.name}`} title={clinic.email ? 'Edit clinic' : 'No linked administrator account'} disabled={!clinic.email} onClick={() => openEdit(clinic)}><Pencil /></button><button className="admin-row-menu" aria-label={`Issue new password for ${clinic.name}`} title={clinic.email ? 'Issue temporary password' : 'No linked administrator account'} disabled={!clinic.email} onClick={() => void issuePassword(clinic)}><KeyRound /></button><button className="admin-row-menu" aria-label={`${clinic.administratorActive ? 'Pause' : 'Restore'} administrator access for ${clinic.name}`} title={clinic.email ? `${clinic.administratorActive ? 'Pause' : 'Restore'} administrator access` : 'No linked administrator account'} disabled={!clinic.email || updatingAdminId === clinic.id} onClick={() => void toggleClinicAdminAccess(clinic)}>{clinic.administratorActive ? <LockKeyhole /> : <Check />}</button><button className="admin-row-menu admin-row-delete" aria-label={`Permanently delete ${clinic.name}`} title="Permanently delete clinic and its data" onClick={() => openDelete(clinic)}><Trash2 /></button></div></td></tr>)}</tbody></table>{filteredClinics.length === 0 && <div className="admin-no-results">No clinics match “{query}”.</div>}</div>
           <div className="admin-table-footer"><span>Showing {filteredClinics.length} clinic{filteredClinics.length === 1 ? '' : 's'} <span className="admin-footer-muted">· Supabase</span></span></div>
         </section>
         {notice && <div className="admin-toast" role="status"><ShieldCheck />{notice}<button aria-label="Dismiss message" onClick={() => setNotice('')}><X /></button></div>}
@@ -184,6 +219,7 @@ export function ClinicAdminPage({ clinics, adminEmail }: { clinics: PublicClinic
         {error && <p className="admin-error" role="alert">{error}</p>}
         <div className="admin-dialog-footer"><button type="button" className="admin-secondary" onClick={() => setDialog(null)} disabled={saving}>Cancel</button><button type="submit" className="admin-primary" disabled={saving}>{dialog === 'create' ? <Plus /> : <Check />}{saving ? 'Saving…' : dialog === 'create' ? 'Create clinic' : 'Save changes'}</button></div>
       </form><p className="admin-dialog-footnote"><ShieldCheck /> Temporary passwords are generated randomly, stored as hashes, and shown only once.</p></section></div>}
+      {deletingClinic && <div className="admin-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setDeletingClinic(null) }}><section className="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-clinic-title"><div className="admin-dialog-head"><div><span className="admin-dialog-icon admin-dialog-danger-icon"><Trash2 /></span><h2 id="delete-clinic-title">Permanently delete clinic</h2><p>This action cannot be undone.</p></div><button className="admin-icon-button" onClick={() => setDeletingClinic(null)} aria-label="Close dialog" disabled={saving}><X /></button></div><div className="admin-delete-warning"><strong>{deletingClinic.name}</strong><p>This permanently deletes the organization, its branches, memberships, patient and clinical records, appointments, and uploaded files. Clinic users who belong to other organizations will keep their accounts. A user account needed for retained audit history may also remain, but will lose access to this clinic. A platform audit event will be retained.</p></div><form onSubmit={submitDelete}><label className="admin-field">Type <strong>{deletingClinic.name}</strong> to confirm<input name="confirmationName" required autoComplete="off" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} placeholder={deletingClinic.name} /></label>{error && <p className="admin-error" role="alert">{error}</p>}<div className="admin-dialog-footer"><button type="button" className="admin-secondary" onClick={() => setDeletingClinic(null)} disabled={saving}>Cancel</button><button type="submit" className="admin-danger" disabled={saving || deleteConfirmation.trim() !== deletingClinic.name}>{saving ? 'Deleting…' : 'Delete permanently'}</button></div></form></section></div>}
     </div>
   </div>
 }

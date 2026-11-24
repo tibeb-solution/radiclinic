@@ -366,6 +366,9 @@ h1 { margin: 10px 0 4px; color: #2e403b; font-size: clamp(23px, 2.25vw, 30px); f
 .admin-primary { display: inline-flex; min-height: 37px; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 8px; padding: 0 12px; background: #327d6a; color: #fff; font-size: 10px; font-weight: 650; cursor: pointer; box-shadow: 0 2px 5px #286d5c1c; }
 .admin-primary:hover { background: #286e5e; }
 .admin-primary svg { width: 14px; height: 14px; }
+.admin-danger { display: inline-flex; min-height: 35px; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 7px; padding: 0 12px; background: #a84740; color: #fff; font-size: 10px; font-weight: 650; cursor: pointer; }
+.admin-danger:hover { background: #913b35; }
+.admin-danger:disabled { cursor: not-allowed; opacity: .55; }
 .prototype-callout { display: flex; align-items: center; gap: 11px; margin-bottom: 16px; border: 1px solid #e9dfcb; border-radius: 9px; padding: 11px 13px; background: #fcf9f2; }
 .prototype-callout-icon { display: grid; width: 31px; height: 31px; flex: 0 0 31px; place-items: center; border-radius: 8px; background: #f5ecda; color: #9c8051; }
 .prototype-callout-icon svg { width: 16px; height: 16px; }
@@ -426,6 +429,8 @@ h1 { margin: 10px 0 4px; color: #2e403b; font-size: clamp(23px, 2.25vw, 30px); f
 .admin-row-menu:hover { background: #f2f5f3; }
 .admin-row-menu:disabled { cursor: wait; opacity: .55; }
 .admin-row-menu svg { width: 15px; height: 15px; }
+.admin-row-delete { color: #a84740; }
+.admin-row-delete:hover { background: #fff1ef; }
 .admin-no-results { padding: 24px; color: #929e98; font-size: 10px; text-align: center; }
 .admin-table-footer { display: flex; min-height: 42px; align-items: center; justify-content: space-between; border-top: 1px solid #eff2f0; padding: 0 15px; color: #7f8c86; font-size: 8px; }
 .admin-footer-muted { color: #a3ada8; }
@@ -449,12 +454,15 @@ h1 { margin: 10px 0 4px; color: #2e403b; font-size: clamp(23px, 2.25vw, 30px); f
 .admin-dialog-head { display: flex; justify-content: space-between; gap: 12px; }
 .admin-dialog-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 9px; background: #eaf3ef; color: #4e8774; }
 .admin-dialog-icon svg { width: 17px; height: 17px; }
+.admin-dialog-danger-icon { background: #fff0ee; color: #a84740; }
 .admin-dialog-head h2 { margin: 12px 0 4px; color: #354740; font-size: 15px; font-weight: 650; }
 .admin-dialog-head p { margin: 0; color: #8b9791; font-size: 10px; }
 .admin-dialog-head > .admin-icon-button { margin-top: -5px; }
 .dialog-prototype-note { display: flex; align-items: center; gap: 8px; margin: 16px 0; border: 1px solid #efe4cf; border-radius: 7px; padding: 9px; background: #fcf8f0; color: #88744f; font-size: 9px; }
 .dialog-prototype-note svg { width: 14px; height: 14px; flex: 0 0 14px; }
 .admin-dialog form { display: flex; flex-direction: column; gap: 12px; }
+.admin-delete-warning { margin: 16px 0; border: 1px solid #f0d8d5; border-radius: 8px; padding: 11px; background: #fff8f7; color: #8d4a44; font-size: 10px; line-height: 1.5; }
+.admin-delete-warning p { margin: 5px 0 0; color: #8b6661; }
 .admin-field { display: flex; flex: 1; flex-direction: column; gap: 6px; color: #63726a; font-size: 9px; font-weight: 600; }
 .admin-field input, .admin-field select { width: 100%; height: 36px; border: 1px solid #e3e9e5; border-radius: 7px; padding: 0 10px; outline: 0; background: #fff; color: #52635a; font-size: 10px; }
 .admin-field input::placeholder { color: #a6b0aa; }
