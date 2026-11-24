@@ -48,6 +48,7 @@ import {
   createClinicClinicalRecord,
   createClinicPatient,
   createClinicSupportRequest,
+  getOpenClinicalSafetyAlerts,
   getClinicWorkspaceData,
   logout,
   setClinicAppointmentStatus,
@@ -55,6 +56,7 @@ import {
   setClinicPatientStatus,
   setClinicStaffStatus,
   updateClinicProfile,
+  type ClinicalSafetyAlertSummary,
 } from '@/app/auth-actions'
 
 type ModuleName =
@@ -260,12 +262,15 @@ export function DentalDashboard({
   const [loadError, setLoadError] = useState('')
   const [branchId, setBranchId] = useState('')
   const [selectedPatientId, setSelectedPatientId] = useState('')
+  const [focusSafetyAlerts, setFocusSafetyAlerts] = useState(false)
   const [modal, setModal] = useState<ModalName | null>(null)
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [profileSaving, setProfileSaving] = useState(false)
   const [staffCredential, setStaffCredential] = useState<{ email: string; password: string } | null>(null)
+  const [safetyAlerts, setSafetyAlerts] = useState<ClinicalSafetyAlertSummary[]>([])
+  const [safetyAlertError, setSafetyAlertError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -287,6 +292,25 @@ export function DentalDashboard({
     })
     return () => { active = false }
   }, [clinicId, clinicName, branchName])
+
+  useEffect(() => {
+    if (active !== 'Overview') return
+    let activeRequest = true
+    void getOpenClinicalSafetyAlerts().then((result) => {
+      if (!activeRequest) return
+      if (!result.ok) {
+        setSafetyAlertError(result.error)
+        return
+      }
+      setSafetyAlerts(result.value)
+      setSafetyAlertError('')
+    }).catch((error: unknown) => {
+      if (activeRequest) {
+        setSafetyAlertError(error instanceof Error ? error.message : 'Could not load clinical safety alerts.')
+      }
+    })
+    return () => { activeRequest = false }
+  }, [active])
 
   const branches = useMemo(
     () => (data?.branches ?? []).filter((item) => item.organizationId === clinicId),
@@ -599,6 +623,26 @@ export function DentalDashboard({
         {active === 'Overview' && <>
           <div className="welcome-row"><div><div className="eyebrow"><span className="live-dot" /> {dayLabel.toUpperCase()}</div><h1>{clinicName}</h1><p className="welcome-subtitle">Your clinic workspace. Changes are saved to your secure clinic database.</p></div><button className="primary-button" onClick={openNewPatient}><Plus /> New patient</button></div>
           <div className="branch-notice"><div className="branch-notice-icon"><Stethoscope /></div><div><strong>{clinicName}</strong><span>{selectedBranch.name} branch <i /> Secure clinic workspace</span></div><button className="notice-link" onClick={() => setActive('Branches')}>Manage branches <ArrowRight /></button></div>
+          {safetyAlertError && <p className="workspace-error" role="alert">{safetyAlertError}</p>}
+          {safetyAlerts.length > 0 && <section className="panel safety-dashboard-panel" aria-label="Open clinical safety alerts">
+            <div className="panel-header"><div><div className="panel-title-row"><h2>Clinical safety alerts</h2><span className="count-chip">{safetyAlerts.length}</span></div><p>Open alerts visible to your assigned branches; acknowledge and act promptly.</p></div><Bell /></div>
+            <div className="safety-dashboard-list">{safetyAlerts.map((alert) => (
+              <button
+                type="button"
+                key={alert.id}
+                className={`safety-dashboard-alert safety-alert-${alert.criticality}`}
+                onClick={() => {
+                  setSelectedPatientId(alert.patientId)
+                  setFocusSafetyAlerts(true)
+                  setActive('Patients')
+                }}
+              >
+                <span className="safety-alert-badge">{alert.criticality}</span>
+                <span><strong>{alert.title}</strong><small>{alert.patientName} · {alert.status.replaceAll('_', ' ')} · {formatDate(alert.createdAt.slice(0, 10))}</small></span>
+                <ArrowRight />
+              </button>
+            ))}</div>
+          </section>}
           <section className="stats-grid" aria-label="Clinic overview statistics">
             <StatCard label="Active patients" value={activePatientCount} footnote="In this clinic" icon={UsersRound} />
             <StatCard label="Appointments today" value={appointmentsForDate.length} footnote={dayLabel} icon={CalendarDays} />
@@ -633,7 +677,11 @@ export function DentalDashboard({
           {selectedPatientId ? <PatientClinicalChart
             patientId={selectedPatientId}
             branchId={patients.find((patient) => patient.id === selectedPatientId)?.registeredBranchId ?? branchForRecord().id}
-            onClose={() => setSelectedPatientId('')}
+            focusSafetyAlerts={focusSafetyAlerts}
+            onClose={() => {
+              setSelectedPatientId('')
+              setFocusSafetyAlerts(false)
+            }}
           /> : <>
           <div className="module-heading"><div><div className="eyebrow">CLINIC WORKSPACE</div><h1>Patients</h1><p>Manage patient profiles belonging to this clinic.</p></div><button className="primary-button" onClick={openNewPatient}><Plus /> Add patient</button></div>
           <section className="panel workspace-panel"><div className="panel-header"><div><div className="panel-title-row"><h2>Patient directory</h2><span className="count-chip">{visiblePatients.length}</span></div><p>Search filters by name, patient number, or phone.</p></div></div>

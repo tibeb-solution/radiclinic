@@ -709,6 +709,33 @@ h1 { margin: 10px 0 4px; color: #2e403b; font-size: clamp(23px, 2.25vw, 30px); f
 .chart-diagnosis-list strong { color: #475b50; font-size: 10px; }
 .chart-diagnosis-list span { margin-left: 7px; color: #86948b; font-size: 9px; }
 .chart-diagnosis-list p { margin: 5px 0 0; color: #77867d; font-size: 9px; line-height: 1.5; }
+.patient-critical-alert-banner { display: flex; width: 100%; align-items: center; gap: 10px; margin: 12px 0; border: 1px solid #e8b7b2; border-radius: 9px; padding: 11px 13px; background: #fff3f1; color: #9c3932; text-align: left; cursor: pointer; }
+.patient-critical-alert-banner > svg:first-child { width: 18px; height: 18px; flex: 0 0 18px; }
+.patient-critical-alert-banner span { display: flex; flex: 1; flex-direction: column; gap: 3px; }
+.patient-critical-alert-banner strong { font-size: 11px; }
+.patient-critical-alert-banner small { color: #85514b; font-size: 9px; }
+.critical-alert-chevron { width: 15px; height: 15px; transform: rotate(180deg); }
+.safety-alert-list, .safety-rule-list { display: flex; flex-direction: column; gap: 10px; }
+.safety-alert-card { border: 1px solid #e6ece8; border-radius: 8px; padding: 12px; background: #fff; }
+.safety-alert-card.safety-alert-urgent { border-color: #e8d7a9; background: #fffdf6; }
+.safety-alert-card.safety-alert-critical { border-color: #e7bcb8; background: #fff8f7; }
+.safety-alert-heading { display: flex; align-items: center; gap: 9px; }
+.safety-alert-heading > div { display: flex; flex-direction: column; gap: 4px; }
+.safety-alert-heading strong { color: #42564b; font-size: 11px; }
+.safety-alert-heading small, .safety-alert-card > small { color: #87948c; font-size: 9px; }
+.safety-alert-badge { display: inline-flex; align-items: center; border-radius: 12px; padding: 4px 8px; background: #edf3ef; color: #527362; font-size: 8px; font-weight: 700; text-transform: uppercase; }
+.safety-alert-urgent .safety-alert-badge { background: #fff1d2; color: #876728; }
+.safety-alert-critical .safety-alert-badge { background: #f9dedb; color: #a34139; }
+.safety-alert-card > p { display: flex; flex-direction: column; gap: 4px; margin: 9px 0; color: #65756b; font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.safety-alert-card > p strong { color: #4a5d52; }
+.safety-alert-card > p span { color: #77867d; }
+.safety-dashboard-panel { margin: 14px 0; border-color: #ecd3b2; }
+.safety-dashboard-list { display: flex; flex-direction: column; }
+.safety-dashboard-alert { display: flex; align-items: center; gap: 9px; border: 0; border-top: 1px solid #edf1ee; padding: 9px 2px; background: transparent; text-align: left; cursor: pointer; }
+.safety-dashboard-alert > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; gap: 3px; }
+.safety-dashboard-alert strong { color: #495e52; font-size: 10px; }
+.safety-dashboard-alert small { color: #849188; font-size: 9px; }
+.safety-dashboard-alert > svg { width: 14px; height: 14px; color: #829087; }
 .odontogram-legend { display: flex; flex-wrap: wrap; gap: 11px; color: #78877e; font-size: 9px; }
 .odontogram-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .tooth-dot { width: 8px; height: 8px; border: 1px solid #d8e2dc; border-radius: 3px; background: #fff; }

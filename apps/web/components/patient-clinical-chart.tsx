@@ -3,8 +3,12 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   addOdontogramFinding,
+  addDiagnosisCatalogEntry,
   addPatientHistoryEntry,
   addVisitDiagnosis,
+  acknowledgeClinicalSafetyAlert,
+  configureClinicalSafetyAlertRule,
+  createClinicalSafetyAlert,
   createClinicPrescription,
   createClinicTreatmentPlan,
   createClinicalEncounter,
@@ -12,17 +16,23 @@ import {
   getClinicalPatientChart,
   recordPatientConsent,
   recordPerformedProcedure,
+  recordClinicalOutcome,
+  recordDiagnosisReassessment,
+  resolveClinicalSafetyAlert,
+  escalateClinicalSafetyAlert,
   reviewClinicalRecord,
+  searchDiagnosisCatalog,
   submitClinicalRecord,
   updateTreatmentPlanItemStatus,
   uploadClinicalAttachment,
   updateClinicPatientProfile,
   type ClinicalEncounterInput,
+  type DiagnosisCatalogEntry,
   type ClinicalPatientChart,
 } from '@/app/auth-actions'
-import { ArrowLeft, Check, ClipboardPlus, FileHeart, HeartPulse, Plus, Stethoscope, UserRound } from 'lucide-react'
+import { ArrowLeft, Bell, Check, ClipboardPlus, FileHeart, HeartPulse, Plus, Stethoscope, UserRound } from 'lucide-react'
 
-type ChartSection = 'profile' | 'history' | 'visits' | 'dental' | 'treatments' | 'documents'
+type ChartSection = 'profile' | 'history' | 'visits' | 'dental' | 'treatments' | 'safety' | 'documents'
 
 const permanentTeeth = [
   '18', '17', '16', '15', '14', '13', '12', '11',
@@ -67,10 +77,12 @@ export function PatientClinicalChart({
   patientId,
   branchId,
   onClose,
+  focusSafetyAlerts = false,
 }: {
   patientId: string
   branchId: string
   onClose: () => void
+  focusSafetyAlerts?: boolean
 }) {
   const [chart, setChart] = useState<ClinicalPatientChart | null>(null)
   const [section, setSection] = useState<ChartSection>('profile')
@@ -83,6 +95,52 @@ export function PatientClinicalChart({
   const [saving, setSaving] = useState(false)
   const [openingAttachment, setOpeningAttachment] = useState('')
   const [updatingTreatmentId, setUpdatingTreatmentId] = useState('')
+  const [diagnosisSearch, setDiagnosisSearch] = useState('')
+  const [diagnosisCatalogResults, setDiagnosisCatalogResults] = useState<DiagnosisCatalogEntry[]>([])
+  const [selectedCatalogEntry, setSelectedCatalogEntry] = useState<DiagnosisCatalogEntry | null>(null)
+  const [searchingDiagnosisCatalog, setSearchingDiagnosisCatalog] = useState(false)
+  const [diagnosisName, setDiagnosisName] = useState('')
+  const [diagnosisCode, setDiagnosisCode] = useState('')
+  const [diagnosisCodeSystem, setDiagnosisCodeSystem] = useState('')
+  const [diagnosisCategory, setDiagnosisCategory] = useState('dental')
+  const [diagnosisDescription, setDiagnosisDescription] = useState('')
+  const [diagnosisLocation, setDiagnosisLocation] = useState('')
+
+  useEffect(() => {
+    let active = true
+    const query = diagnosisSearch.trim()
+    if (query.length < 2) {
+      setDiagnosisCatalogResults([])
+      setSearchingDiagnosisCatalog(false)
+      return
+    }
+
+    const timeout = window.setTimeout(async () => {
+      setSearchingDiagnosisCatalog(true)
+      try {
+        const result = await searchDiagnosisCatalog(query)
+        if (!active) return
+        if (result.ok) {
+          setDiagnosisCatalogResults(result.value)
+        } else {
+          setDiagnosisCatalogResults([])
+          setFormError(result.error)
+        }
+      } catch (error) {
+        if (active) {
+          setDiagnosisCatalogResults([])
+          setFormError(error instanceof Error ? error.message : 'Could not search the diagnosis catalog.')
+        }
+      } finally {
+        if (active) setSearchingDiagnosisCatalog(false)
+      }
+    }, 250)
+
+    return () => {
+      active = false
+      window.clearTimeout(timeout)
+    }
+  }, [diagnosisSearch])
 
   const reload = useCallback(async () => {
     try {
@@ -106,6 +164,9 @@ export function PatientClinicalChart({
   }, [patientId])
 
   useEffect(() => { void reload() }, [reload])
+  useEffect(() => {
+    if (focusSafetyAlerts) setSection('safety')
+  }, [focusSafetyAlerts])
 
   const selectedVisit = useMemo(
     () => chart?.visits.find((visit) => visit.id === selectedVisitId) ?? null,
@@ -116,7 +177,8 @@ export function PatientClinicalChart({
     event: FormEvent<HTMLFormElement>,
     operation: (form: FormData) => Promise<{ ok: boolean; error?: string; value?: string }>,
     successMessage: string,
-    resetOnSuccess = true
+    resetOnSuccess = true,
+    afterSuccess?: () => void
   ) {
     event.preventDefault()
     const formElement = event.currentTarget
@@ -133,9 +195,52 @@ export function PatientClinicalChart({
       const refreshed = await reload()
       if (!refreshed) return
       if (resetOnSuccess) formElement.reset()
+      afterSuccess?.()
       setNotice(successMessage)
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'The change could not be saved.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function chooseDiagnosisCatalogEntry(entry: DiagnosisCatalogEntry) {
+    setSelectedCatalogEntry(entry)
+    setDiagnosisName(entry.diagnosisName)
+    setDiagnosisCode(entry.diagnosisCode ?? '')
+    setDiagnosisCodeSystem(entry.codeSystem ?? '')
+    setDiagnosisCategory(entry.category)
+    setDiagnosisDescription(entry.description ?? '')
+    setDiagnosisLocation(entry.anatomicalArea ?? '')
+    setDiagnosisSearch(entry.diagnosisName)
+  }
+
+  async function saveDiagnosisCatalogEntry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const formElement = event.currentTarget
+    const form = new FormData(formElement)
+    setSaving(true)
+    setFormError('')
+    setNotice('')
+    try {
+      const result = await addDiagnosisCatalogEntry({
+        name: String(form.get('catalogName') ?? ''),
+        code: String(form.get('catalogCode') ?? ''),
+        codeSystem: String(form.get('catalogCodeSystem') ?? ''),
+        category: String(form.get('catalogCategory') ?? ''),
+        description: String(form.get('catalogDescription') ?? ''),
+        anatomicalArea: String(form.get('catalogArea') ?? ''),
+        requiresTooth: form.get('catalogRequiresTooth') === 'on',
+      })
+      if (!result.ok) {
+        setFormError(result.error)
+        return
+      }
+      chooseDiagnosisCatalogEntry(result.value)
+      formElement.reset()
+      setNotice('Diagnosis added to the clinic catalog.')
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Could not add the diagnosis to the clinic catalog.')
     } finally {
       setSaving(false)
     }
@@ -158,9 +263,7 @@ export function PatientClinicalChart({
   const visibleVitals = selectedVisit
     ? chart.vitals.find((vital) => vital.visitId === selectedVisit.id)
     : undefined
-  const visibleDiagnoses = selectedVisit
-    ? chart.diagnoses.filter((diagnosis) => diagnosis.visitId === selectedVisit.id)
-    : []
+  const visibleDiagnoses = selectedVisit ? chart.diagnoses : []
 
   return <section className="patient-chart">
     <button className="chart-back-button" onClick={onClose}><ArrowLeft /> Patient directory</button>
@@ -189,6 +292,7 @@ export function PatientClinicalChart({
         ['visits', 'Visits & examination'],
         ['dental', 'Dental chart'],
         ['treatments', 'Plans & prescriptions'],
+        ['safety', `Safety alerts${chart.clinicalSafetyAlerts.some((alert) => alert.status !== 'resolved') ? ` · ${chart.clinicalSafetyAlerts.filter((alert) => alert.status !== 'resolved').length}` : ''}`],
         ['documents', 'Documents & consent'],
       ] as const).map(([key, label]) => (
         <button
@@ -201,6 +305,16 @@ export function PatientClinicalChart({
         </button>
       ))}
     </nav>
+
+    {chart.clinicalSafetyAlerts.some((alert) => alert.criticality === 'critical' && alert.status !== 'resolved') && <button
+      type="button"
+      className="patient-critical-alert-banner"
+      onClick={() => setSection('safety')}
+    >
+      <Bell />
+      <span><strong>Critical clinical alert</strong><small>Open the safety alert panel to acknowledge or escalate.</small></span>
+      <ArrowLeft className="critical-alert-chevron" />
+    </button>}
 
     {section === 'profile' && <>
       <div className="chart-summary-grid">
@@ -401,25 +515,224 @@ export function PatientClinicalChart({
           <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
             addVisitDiagnosis({
               visitId: selectedVisit.id,
-              name: String(form.get('diagnosisName') ?? ''),
-              code: String(form.get('diagnosisCode') ?? ''),
-              description: String(form.get('diagnosisDescription') ?? ''),
-              location: String(form.get('diagnosisLocation') ?? ''),
-              toothNumber: String(form.get('diagnosisTooth') ?? ''),
+              catalogEntryId: selectedCatalogEntry?.id ?? '',
+              name: diagnosisName,
+              code: diagnosisCode,
+              codeSystem: diagnosisCodeSystem,
+              category: diagnosisCategory,
+              description: diagnosisDescription,
+              location: diagnosisLocation,
+              toothNumbers: String(form.get('diagnosisTeeth') ?? '')
+                .split(',')
+                .map((tooth) => tooth.trim())
+                .filter(Boolean),
+              toothSurface: String(form.get('diagnosisSurface') ?? 'whole_tooth'),
+              severity: String(form.get('diagnosisSeverity') ?? 'unspecified'),
               findings: String(form.get('diagnosisFindings') ?? ''),
-            }), 'Diagnosis added to the selected visit.')}>
+              clinicalNotes: String(form.get('diagnosisClinicalNotes') ?? ''),
+              certainty: String(form.get('diagnosisCertainty') ?? 'provisional'),
+              priority: String(form.get('diagnosisPriority') ?? 'routine'),
+              reasoning: String(form.get('diagnosisReasoning') ?? ''),
+              conflictingFindings: String(form.get('diagnosisConflictingFindings') ?? ''),
+              requiredInvestigations: String(form.get('diagnosisInvestigations') ?? ''),
+              priorityReason: String(form.get('diagnosisPriorityReason') ?? ''),
+            }), 'Diagnosis added to the selected visit.', true, () => {
+              setSelectedCatalogEntry(null)
+              setDiagnosisSearch('')
+              setDiagnosisName('')
+              setDiagnosisCode('')
+              setDiagnosisCodeSystem('')
+              setDiagnosisCategory('dental')
+              setDiagnosisDescription('')
+              setDiagnosisLocation('')
+            })}>
             <h3>Add diagnosis</h3>
-            <Field label="Diagnosis"><input name="diagnosisName" maxLength={200} required /></Field>
+            <Field label="Search clinic diagnosis catalog">
+              <input
+                value={diagnosisSearch}
+                onChange={(event) => setDiagnosisSearch(event.target.value)}
+                maxLength={100}
+                placeholder="Search by diagnosis name or code"
+                aria-label="Search clinic diagnosis catalog"
+              />
+            </Field>
+            {searchingDiagnosisCatalog && <p className="chart-empty" aria-live="polite">Searching diagnoses…</p>}
+            {diagnosisCatalogResults.length > 0 && <div className="chart-diagnosis-list" role="listbox" aria-label="Diagnosis catalog results">
+              {diagnosisCatalogResults.map((entry) => (
+                <button
+                  type="button"
+                  key={entry.id}
+                  role="option"
+                  aria-selected={selectedCatalogEntry?.id === entry.id}
+                  className="chart-visit-select"
+                  onClick={() => chooseDiagnosisCatalogEntry(entry)}
+                >
+                  <strong>{entry.diagnosisName}</strong>
+                  <span>{[entry.diagnosisCode, entry.codeSystem, entry.category.replaceAll('_', ' ')].filter(Boolean).join(' · ')}</span>
+                  {entry.description && <small>{entry.description}</small>}
+                </button>
+              ))}
+            </div>}
+            {selectedCatalogEntry && <p className="chart-notice">Selected from the clinic catalog. You can still add visit-specific findings and notes.</p>}
+            <Field label="Diagnosis"><input name="diagnosisName" value={diagnosisName} onChange={(event) => {
+              setDiagnosisName(event.target.value)
+              setSelectedCatalogEntry(null)
+            }} maxLength={200} required /></Field>
             <div className="clinical-grid">
-              <Field label="Code (optional)"><input name="diagnosisCode" maxLength={50} /></Field>
-              <Field label="Tooth / location"><input name="diagnosisTooth" maxLength={30} /></Field>
+              <Field label="Code (optional)"><input name="diagnosisCode" value={diagnosisCode} onChange={(event) => setDiagnosisCode(event.target.value)} maxLength={50} /></Field>
+              <Field label="Code system (optional)"><input name="diagnosisCodeSystem" value={diagnosisCodeSystem} onChange={(event) => setDiagnosisCodeSystem(event.target.value)} maxLength={40} placeholder="e.g. ICD-10" /></Field>
+              <Field label="Category"><select name="diagnosisCategory" value={diagnosisCategory} onChange={(event) => setDiagnosisCategory(event.target.value)} disabled={Boolean(selectedCatalogEntry)}>
+                <option value="general_medical">General medical</option><option value="dental">Dental</option><option value="periodontal">Periodontal</option><option value="oral_surgery">Oral surgery</option><option value="restorative">Restorative</option><option value="endodontic">Endodontic</option><option value="orthodontic">Orthodontic</option><option value="prosthodontic">Prosthodontic</option><option value="other">Other</option>
+              </select></Field>
+              <Field label="Severity"><select name="diagnosisSeverity" defaultValue="unspecified">
+                <option value="unspecified">Unspecified</option><option value="mild">Mild</option><option value="moderate">Moderate</option><option value="severe">Severe</option><option value="critical">Critical</option>
+              </select></Field>
+              <Field label="Diagnostic certainty"><select name="diagnosisCertainty" defaultValue="provisional">
+                <option value="suspected">Suspected</option><option value="provisional">Provisional</option><option value="confirmed">Confirmed</option><option value="differential">Differential</option>
+              </select></Field>
+              <Field label="Priority"><select name="diagnosisPriority" defaultValue="routine">
+                <option value="routine">Routine</option><option value="priority">Priority</option><option value="urgent">Urgent</option><option value="emergency">Emergency</option>
+              </select></Field>
+              <Field label="Tooth numbers (optional, comma-separated)"><input name="diagnosisTeeth" inputMode="numeric" maxLength={100} placeholder="e.g. 16, 17" /></Field>
+              <Field label="Tooth surface"><select name="diagnosisSurface" defaultValue="whole_tooth">
+                <option value="whole_tooth">Whole tooth</option><option value="mesial">Mesial</option><option value="distal">Distal</option><option value="occlusal">Occlusal</option><option value="buccal">Buccal</option><option value="lingual_palatal">Lingual / palatal</option>
+              </select></Field>
             </div>
-            <Field label="Description"><textarea name="diagnosisDescription" rows={2} maxLength={1500} /></Field>
+            <Field label="Anatomical location (optional)"><input name="diagnosisLocation" value={diagnosisLocation} onChange={(event) => setDiagnosisLocation(event.target.value)} maxLength={200} placeholder="e.g. gingiva, soft tissue, oral mucosa" /></Field>
+            <Field label="Clinical description"><textarea name="diagnosisDescription" value={diagnosisDescription} onChange={(event) => setDiagnosisDescription(event.target.value)} rows={2} maxLength={1500} /></Field>
+            <Field label="Diagnostic reasoning"><textarea name="diagnosisReasoning" rows={2} maxLength={2000} required placeholder="Why is this diagnosis being considered?" /></Field>
             <Field label="Supporting findings"><textarea name="diagnosisFindings" rows={2} maxLength={1500} /></Field>
+            <Field label="Conflicting findings (optional)"><textarea name="diagnosisConflictingFindings" rows={2} maxLength={2000} /></Field>
+            <Field label="Required investigations (optional)"><textarea name="diagnosisInvestigations" rows={2} maxLength={2000} /></Field>
+            <Field label="Reason for non-routine priority (required for priority, urgent, or emergency)"><textarea name="diagnosisPriorityReason" rows={2} maxLength={1000} /></Field>
+            <Field label="Clinical notes"><textarea name="diagnosisClinicalNotes" rows={2} maxLength={1500} /></Field>
             <button className="secondary-button" disabled={saving}><Plus /> Add diagnosis</button>
           </form>
+          {chart.canManageDiagnosisCatalog && <details className="chart-catalog-editor">
+            <summary>Add a diagnosis to the clinic catalog</summary>
+            <form className="clinical-form clinical-subform" onSubmit={saveDiagnosisCatalogEntry}>
+              <Field label="Diagnosis name"><input name="catalogName" maxLength={200} required /></Field>
+              <div className="clinical-grid">
+                <Field label="Code (optional)"><input name="catalogCode" maxLength={50} /></Field>
+                <Field label="Code system (optional)"><input name="catalogCodeSystem" maxLength={40} placeholder="e.g. ICD-10" /></Field>
+                <Field label="Category"><select name="catalogCategory" defaultValue="dental">
+                  <option value="general_medical">General medical</option><option value="dental">Dental</option><option value="periodontal">Periodontal</option><option value="oral_surgery">Oral surgery</option><option value="restorative">Restorative</option><option value="endodontic">Endodontic</option><option value="orthodontic">Orthodontic</option><option value="prosthodontic">Prosthodontic</option><option value="other">Other</option>
+                </select></Field>
+                <Field label="Anatomical area (optional)"><input name="catalogArea" maxLength={200} /></Field>
+              </div>
+              <Field label="Catalog description"><textarea name="catalogDescription" rows={2} maxLength={1500} /></Field>
+              <label className="clinical-check"><input name="catalogRequiresTooth" type="checkbox" /> This diagnosis requires a tooth location</label>
+              <button className="secondary-button" disabled={saving}>{saving ? 'Saving catalog entry…' : 'Save catalog entry'}</button>
+            </form>
+          </details>}
           {visibleDiagnoses.length > 0 && <div className="chart-diagnosis-list">{visibleDiagnoses.map((diagnosis) => (
-            <article key={diagnosis.id}><strong>{diagnosis.diagnosisName}</strong>{diagnosis.diagnosisCode && <span>{diagnosis.diagnosisCode}</span>}<p>{diagnosis.description || diagnosis.supportingFindings || 'No additional notes'}</p></article>
+            <article key={diagnosis.id}>
+              <strong>{diagnosis.diagnosisName}</strong>
+              {diagnosis.diagnosisCode && <span>{diagnosis.diagnosisCode}{diagnosis.diagnosisCodeSystem ? ` · ${diagnosis.diagnosisCodeSystem}` : ''}</span>}
+              <small>{diagnosis.category.replaceAll('_', ' ')} · {diagnosis.status.replaceAll('_', ' ')} · {diagnosis.certainty} · {diagnosis.priority}{diagnosis.severity ? ` · ${diagnosis.severity}` : ''} · recorded {dateTime(diagnosis.diagnosedAt)}</small>
+              {diagnosis.description && <p>{diagnosis.description}</p>}
+              {diagnosis.diagnosticReasoning && <p>Reasoning: {diagnosis.diagnosticReasoning}</p>}
+              {diagnosis.supportingFindings && <p>Findings: {diagnosis.supportingFindings}</p>}
+              {diagnosis.conflictingFindings && <p>Conflicting findings: {diagnosis.conflictingFindings}</p>}
+              {diagnosis.requiredInvestigations && <p>Investigations: {diagnosis.requiredInvestigations}</p>}
+              {diagnosis.priorityReason && <p>Priority rationale: {diagnosis.priorityReason}</p>}
+              {diagnosis.clinicalNotes && <p>Clinical notes: {diagnosis.clinicalNotes}</p>}
+              {diagnosis.locations.length > 0 && <small>{diagnosis.locations.map((location) => location.toothNumber
+                ? `Tooth ${location.toothNumber} · ${location.toothSurface?.replaceAll('_', ' ')}${location.anatomicalArea ? ` · ${location.anatomicalArea}` : ''}`
+                : location.anatomicalArea).filter(Boolean).join('; ')}</small>}
+              {chart.diagnosisAssessments.filter((assessment) => assessment.diagnosisId === diagnosis.id).length > 0 && <div className="chart-timeline">
+                {chart.diagnosisAssessments.filter((assessment) => assessment.diagnosisId === diagnosis.id).map((assessment) => (
+                  <p key={assessment.id}>
+                    <strong>Reassessment · {assessment.progression.replaceAll('_', ' ')}</strong>
+                    <small>{dateTime(assessment.assessedAt)} · {assessment.status.replaceAll('_', ' ')} · {assessment.certainty} · {assessment.priority}</small>
+                    <span>{assessment.assessmentReason}</span>
+                  </p>
+                ))}
+              </div>}
+              {chart.clinicalOutcomes.filter((outcome) => outcome.diagnosisId === diagnosis.id).map((outcome) => (
+                <p key={outcome.id}>
+                  <strong>Outcome · {outcome.outcome.replaceAll('_', ' ')}</strong>
+                  <small>{dateTime(outcome.assessedAt)}</small>
+                  <span>{outcome.clinicalFindings}</span>
+                  {outcome.complications && <span>Complications: {outcome.complications}</span>}
+                  {outcome.furtherTreatmentRequired && <span>Further treatment: {outcome.furtherTreatmentRequired}</span>}
+                </p>
+              ))}
+              {diagnosis.status !== 'entered_in_error' && <details className="clinical-details">
+                <summary>Reassess diagnosis</summary>
+                <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+                  recordDiagnosisReassessment({
+                    diagnosisId: diagnosis.id,
+                    visitId: selectedVisit.id,
+                    status: String(form.get('reassessmentStatus') ?? diagnosis.status),
+                    certainty: String(form.get('reassessmentCertainty') ?? diagnosis.certainty),
+                    priority: String(form.get('reassessmentPriority') ?? diagnosis.priority),
+                    severity: String(form.get('reassessmentSeverity') ?? diagnosis.severity ?? ''),
+                    progression: String(form.get('reassessmentProgression') ?? 'undetermined'),
+                    reason: String(form.get('reassessmentReason') ?? ''),
+                    supportingFindings: String(form.get('reassessmentFindings') ?? ''),
+                    conflictingFindings: String(form.get('reassessmentConflictingFindings') ?? ''),
+                    requiredInvestigations: String(form.get('reassessmentInvestigations') ?? ''),
+                    priorityReason: String(form.get('reassessmentPriorityReason') ?? ''),
+                  }), 'Diagnosis reassessment saved.')}>
+                  <div className="clinical-grid">
+                    <Field label="Status"><select name="reassessmentStatus" defaultValue={diagnosis.status}>
+                      <option value="active">Active</option><option value="under_treatment">Under treatment</option><option value="resolved">Resolved</option><option value="historical">Historical</option><option value="ruled_out">Ruled out</option><option value="entered_in_error">Entered in error</option>
+                    </select></Field>
+                    <Field label="Certainty"><select name="reassessmentCertainty" defaultValue={diagnosis.certainty}>
+                      <option value="suspected">Suspected</option><option value="provisional">Provisional</option><option value="confirmed">Confirmed</option><option value="differential">Differential</option>
+                    </select></Field>
+                    <Field label="Priority"><select name="reassessmentPriority" defaultValue={diagnosis.priority}>
+                      <option value="routine">Routine</option><option value="priority">Priority</option><option value="urgent">Urgent</option><option value="emergency">Emergency</option>
+                    </select></Field>
+                    <Field label="Severity"><select name="reassessmentSeverity" defaultValue={diagnosis.severity ?? 'unspecified'}>
+                      <option value="unspecified">Unspecified</option><option value="mild">Mild</option><option value="moderate">Moderate</option><option value="severe">Severe</option><option value="critical">Critical</option>
+                    </select></Field>
+                    <Field label="Progression"><select name="reassessmentProgression" defaultValue="undetermined">
+                      <option value="improved">Improved</option><option value="worsened">Worsened</option><option value="unchanged">Unchanged</option><option value="resolved">Resolved</option><option value="recurrence">Recurrence</option><option value="complicated">Complicated</option><option value="undetermined">Undetermined</option>
+                    </select></Field>
+                  </div>
+                  <Field label="Reason for reassessment"><textarea name="reassessmentReason" rows={2} maxLength={2000} required /></Field>
+                  <Field label="New supporting findings"><textarea name="reassessmentFindings" rows={2} maxLength={2000} /></Field>
+                  <Field label="Conflicting findings"><textarea name="reassessmentConflictingFindings" rows={2} maxLength={2000} /></Field>
+                  <Field label="Required investigations"><textarea name="reassessmentInvestigations" rows={2} maxLength={2000} /></Field>
+                  <Field label="Reason for changing priority (required if priority changes)"><textarea name="reassessmentPriorityReason" rows={2} maxLength={1000} /></Field>
+                  <button className="secondary-button" disabled={saving}>Save reassessment</button>
+                </form>
+              </details>}
+              {diagnosis.status !== 'entered_in_error' && <details className="clinical-details">
+                <summary>Record clinical outcome</summary>
+                <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+                  recordClinicalOutcome({
+                    diagnosisId: diagnosis.id,
+                    visitId: selectedVisit.id,
+                    assessmentId: String(form.get('outcomeAssessment') ?? ''),
+                    procedureId: String(form.get('outcomeProcedure') ?? ''),
+                    outcome: String(form.get('clinicalOutcome') ?? 'undetermined'),
+                    clinicalFindings: String(form.get('outcomeFindings') ?? ''),
+                    complications: String(form.get('outcomeComplications') ?? ''),
+                    furtherTreatmentRequired: String(form.get('outcomeFurtherTreatment') ?? ''),
+                  }), 'Clinical outcome recorded.')}>
+                  <Field label="Outcome"><select name="clinicalOutcome" defaultValue="undetermined">
+                    <option value="improved">Improved</option><option value="worsened">Worsened</option><option value="unchanged">Unchanged</option><option value="resolved">Resolved</option><option value="recurrence">Recurrence</option><option value="complicated">Complicated</option><option value="undetermined">Undetermined</option>
+                  </select></Field>
+                  <Field label="Related reassessment (optional)"><select name="outcomeAssessment" defaultValue="">
+                    <option value="">None</option>{chart.diagnosisAssessments.filter((assessment) => assessment.diagnosisId === diagnosis.id && assessment.visitId === selectedVisit.id).map((assessment) => (
+                      <option key={assessment.id} value={assessment.id}>{dateTime(assessment.assessedAt)} · {assessment.progression.replaceAll('_', ' ')}</option>
+                    ))}
+                  </select></Field>
+                  <Field label="Related procedure (optional)"><select name="outcomeProcedure" defaultValue="">
+                    <option value="">None</option>{chart.procedures.map((procedure) => (
+                      <option key={procedure.id} value={procedure.id}>{procedure.procedureName} · {dateTime(procedure.performedAt)}</option>
+                    ))}
+                  </select></Field>
+                  <Field label="Clinical findings"><textarea name="outcomeFindings" rows={2} maxLength={2000} required /></Field>
+                  <Field label="Complications (optional)"><textarea name="outcomeComplications" rows={2} maxLength={2000} /></Field>
+                  <Field label="Further treatment required (optional)"><textarea name="outcomeFurtherTreatment" rows={2} maxLength={2000} /></Field>
+                  <button className="secondary-button" disabled={saving}>Save clinical outcome</button>
+                </form>
+              </details>}
+            </article>
           ))}</div>}
         </article>}
         <ClinicalRecordReview
@@ -740,6 +1053,127 @@ export function PatientClinicalChart({
           </article>
         ))}</div> : <p className="chart-empty">No documents have been uploaded to this patient chart.</p>}
       </article>
+    </div>}
+
+    {section === 'safety' && <div className="chart-content-grid">
+      <article className="panel chart-panel">
+        <div className="panel-header"><div><h2>Flag a clinical safety finding</h2><p>Urgency is set by an authorized clinician. This system does not determine clinical risk.</p></div><Bell /></div>
+        {!chart.canCreateClinicalSafetyAlert
+          ? <p className="chart-empty">Your clinic role cannot flag safety alerts.</p>
+          : selectedVisit ? <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+          createClinicalSafetyAlert({
+            patientId,
+            visitId: String(form.get('safetyVisitId') ?? ''),
+            diagnosisId: String(form.get('safetyDiagnosisId') ?? ''),
+            title: String(form.get('safetyTitle') ?? ''),
+            description: String(form.get('safetyDescription') ?? ''),
+            criticality: String(form.get('safetyCriticality') ?? 'urgent'),
+          }), 'Clinical safety alert flagged.')}>
+          <input type="hidden" name="safetyVisitId" value={selectedVisit.id} />
+          <div className="clinical-grid">
+            <p className="workspace-help-copy">Related visit: {selectedVisit.visitNumber} · {dateTime(selectedVisit.visitedAt)}</p>
+            <Field label="Criticality"><select name="safetyCriticality" defaultValue="urgent">
+              <option value="routine">Routine</option><option value="urgent">Urgent</option><option value="critical">Critical</option>
+            </select></Field>
+          </div>
+          <Field label="Related diagnosis (optional)"><select name="safetyDiagnosisId" defaultValue="">
+            <option value="">Clinical finding not linked to a diagnosis</option>{chart.diagnoses.filter((diagnosis) => diagnosis.visitId === selectedVisit.id).map((diagnosis) => (
+              <option key={diagnosis.id} value={diagnosis.id}>{diagnosis.diagnosisName}</option>
+            ))}
+          </select></Field>
+          <Field label="Finding requiring attention"><input name="safetyTitle" maxLength={200} required placeholder="Concise alert title" /></Field>
+          <Field label="Clinical details"><textarea name="safetyDescription" rows={3} maxLength={2000} required /></Field>
+          <p className="workspace-help-copy">You will be recorded as the responsible clinician. Alerts cannot be deleted; acknowledge with the action taken, and resolve only with a documented reason.</p>
+          <button className="primary-button" disabled={saving}><Bell /> {saving ? 'Flagging alert…' : 'Flag safety alert'}</button>
+        </form> : <p className="chart-empty">Create or select a clinical visit before flagging a safety alert.</p>}
+      </article>
+
+      <article className="panel chart-panel">
+        <div className="panel-header"><div><h2>Patient safety alerts</h2><p>{chart.clinicalSafetyAlerts.length} alert{chart.clinicalSafetyAlerts.length === 1 ? '' : 's'} · actions are permanently recorded.</p></div></div>
+        {chart.clinicalSafetyAlerts.length ? <div className="safety-alert-list">{chart.clinicalSafetyAlerts.map((alert) => {
+          const escalationDue = alert.escalationAfterMinutes === null
+            || Date.now() >= new Date(alert.createdAt).getTime() + alert.escalationAfterMinutes * 60_000
+          const mayAcknowledge = chart.canAcknowledgeClinicalSafetyAlerts && (alert.responsibleUserId === null
+            || alert.responsibleUserId === chart.currentUserId
+            || chart.canEscalateClinicalSafetyAlerts)
+          return <article className={`safety-alert-card safety-alert-${alert.criticality}`} key={alert.id}>
+            <div className="safety-alert-heading">
+              <span className="safety-alert-badge">{alert.criticality}</span>
+              <div><strong>{alert.title}</strong><small>{alert.status.replaceAll('_', ' ')} · flagged {dateTime(alert.createdAt)}</small></div>
+            </div>
+            <p>{alert.description}</p>
+            {alert.responsibleUserId && <small>Responsible clinician: {alert.responsibleUserId === chart.currentUserId ? 'you' : alert.responsibleUserId.slice(0, 8)}</small>}
+            {alert.acknowledgedAt && <p><strong>Acknowledged {dateTime(alert.acknowledgedAt)}</strong>{alert.acknowledgmentAction && <span>{alert.acknowledgmentAction}</span>}</p>}
+            {alert.escalatedAt && <p><strong>Escalated to {alert.escalatedToRole?.replaceAll('_', ' ')} · {dateTime(alert.escalatedAt)}</strong></p>}
+            {alert.resolvedAt && <p><strong>Resolved {dateTime(alert.resolvedAt)}</strong>{alert.resolutionReason && <span>{alert.resolutionReason}</span>}</p>}
+            {alert.status !== 'resolved' && <>
+              {mayAcknowledge && <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+                acknowledgeClinicalSafetyAlert(alert.id, String(form.get('acknowledgmentAction') ?? '')), 'Safety alert acknowledged.')}>
+                <Field label="Action taken"><textarea name="acknowledgmentAction" rows={2} maxLength={2000} required /></Field>
+                <button className="secondary-button" disabled={saving}>Acknowledge alert</button>
+              </form>}
+              {chart.canEscalateClinicalSafetyAlerts && alert.status !== 'acknowledged' && <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+                escalateClinicalSafetyAlert(
+                  alert.id,
+                  String(form.get('escalationRole') ?? 'branch_supervisor'),
+                  String(form.get('escalationReason') ?? '')
+                ), 'Safety alert escalated.')}>
+                <p className="workspace-help-copy">{alert.escalationAfterMinutes
+                  ? `Configured escalation interval: ${alert.escalationAfterMinutes} minutes${escalationDue ? ' (elapsed).' : ' (not elapsed yet).'}`
+                  : 'No timed escalation is configured. A supervisor may escalate manually.'}</p>
+                <div className="clinical-grid">
+                  <Field label="Escalation target"><select name="escalationRole" defaultValue={alert.escalationTargetRole}>
+                    <option value="branch_supervisor">Branch supervisor</option><option value="central_clinical_supervisor">Central clinical supervisor</option>
+                  </select></Field>
+                  <Field label="Reason"><input name="escalationReason" maxLength={1000} required /></Field>
+                </div>
+                <button className="secondary-button" disabled={saving}>Escalate alert</button>
+              </form>}
+              {alert.status === 'acknowledged' && <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+                resolveClinicalSafetyAlert(alert.id, String(form.get('resolutionReason') ?? '')), 'Safety alert resolved.')}>
+                <Field label="Resolution reason"><textarea name="resolutionReason" rows={2} maxLength={2000} required /></Field>
+                <button className="secondary-button" disabled={saving}>Resolve alert</button>
+              </form>}
+            </>}
+            <details className="clinical-details">
+              <summary>Alert history ({alert.events.length})</summary>
+              <div className="chart-timeline">{alert.events.map((event) => (
+                <p key={event.id}><strong>{event.eventType.replaceAll('_', ' ')}</strong><small>{dateTime(event.createdAt)} · user {event.actorId.slice(0, 8)}</small>
+                  {typeof event.details.reason === 'string' && <span>{event.details.reason}</span>}
+                  {typeof event.details.action_taken === 'string' && <span>{event.details.action_taken}</span>}
+                </p>
+              ))}</div>
+            </details>
+          </article>
+        })}</div> : <p className="chart-empty">No safety alerts have been flagged for this patient.</p>}
+      </article>
+
+      {chart.canManageClinicalSafetyAlerts && <article className="panel chart-panel">
+        <div className="panel-header"><div><h2>Clinical escalation settings</h2><p>Changes apply prospectively and are audited. Clinical leadership retains responsibility for configured intervals.</p></div></div>
+        <div className="safety-rule-list">{(['routine', 'urgent', 'critical'] as const).map((criticality) => {
+          const rule = chart.clinicalSafetyAlertRules.find((item) => item.criticality === criticality)
+          return <form className="clinical-form clinical-subform" key={criticality} onSubmit={(event) => handleSubmit(event, async (form) => {
+            const interval = String(form.get('escalationAfterMinutes') ?? '').trim()
+            return configureClinicalSafetyAlertRule({
+              criticality,
+              escalationAfterMinutes: interval ? Number(interval) : null,
+              escalationRole: String(form.get('ruleEscalationRole') ?? 'branch_supervisor'),
+              changeReason: String(form.get('ruleChangeReason') ?? ''),
+            })
+          }, `${criticality} alert escalation settings saved.`)}>
+            <h3>{criticality.replace(/^./, (letter) => letter.toUpperCase())} alerts</h3>
+            <div className="clinical-grid">
+              <Field label="Escalate after minutes (blank for manual)"><input name="escalationAfterMinutes" type="number" min="1" max="10080" defaultValue={rule?.escalationAfterMinutes ?? ''} /></Field>
+              <Field label="Escalation role"><select name="ruleEscalationRole" defaultValue={rule?.escalationRole ?? 'branch_supervisor'}>
+                <option value="branch_supervisor">Branch supervisor</option><option value="central_clinical_supervisor">Central clinical supervisor</option>
+              </select></Field>
+            </div>
+            <Field label="Reason for this configuration"><input name="ruleChangeReason" maxLength={1000} required /></Field>
+            {rule && <small>Current rule: {rule.escalationAfterMinutes === null ? 'manual escalation only' : `${rule.escalationAfterMinutes} minutes`} · {rule.changeReason}</small>}
+            <button className="secondary-button" disabled={saving}>Save {criticality} rule</button>
+          </form>
+        })}</div>
+      </article>}
     </div>}
   </section>
 

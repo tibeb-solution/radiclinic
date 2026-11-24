@@ -314,6 +314,9 @@ create table public.prescriptions (
   check (length(btrim(frequency)) > 0)
 );
 
+alter table public.prescriptions
+  add constraint prescriptions_id_organization_key unique (id, organization_id);
+
 create table public.medication_events (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -327,9 +330,6 @@ create table public.medication_events (
   foreign key (prescription_id, organization_id)
     references public.prescriptions(id, organization_id) on delete cascade
 );
-
-alter table public.prescriptions
-  add constraint prescriptions_id_organization_key unique (id, organization_id);
 
 create table public.patient_consents (
   id uuid primary key default gen_random_uuid(),
@@ -1508,8 +1508,11 @@ create policy "Medication events are branch readable"
 on public.medication_events for select using (
   exists (
     select 1 from public.prescriptions p
-    join public.patients patient on patient.id = p.patient_id
-    where p.id = prescription_id and p.organization_id = organization_id
+    join public.patients patient
+      on patient.id = p.patient_id
+      and patient.organization_id = p.organization_id
+    where p.id = medication_events.prescription_id
+      and p.organization_id = medication_events.organization_id
       and public.can_access_branch(patient.registered_branch_id)
   )
 );
@@ -1518,8 +1521,11 @@ on public.medication_events for insert with check (
   recorded_by = auth.uid()
   and exists (
     select 1 from public.prescriptions p
-    join public.patients patient on patient.id = p.patient_id
-    where p.id = prescription_id and p.organization_id = organization_id
+    join public.patients patient
+      on patient.id = p.patient_id
+      and patient.organization_id = p.organization_id
+    where p.id = medication_events.prescription_id
+      and p.organization_id = medication_events.organization_id
       and public.can_access_branch(patient.registered_branch_id)
   )
   and public.has_org_role(organization_id, array[

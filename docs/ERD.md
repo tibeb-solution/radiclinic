@@ -1,10 +1,8 @@
 # DCMS Entity Relationship Design
 
-## Interim implementation state
+## Current implementation state
 
-This document describes the future PostgreSQL entity model. No database schema or migration is active in the current local-storage implementation.
-
-The browser data store should seed and maintain the same logical entities where implemented: organizations, branches, users, roles, patients, visits, attachments metadata, share records, and audit events.
+Supabase migrations `001`–`007` implement the active organization, patient, visit, and clinical-chart schema. This ERD also describes target entities that have not yet been implemented. Clinic chart reads and writes use Supabase with row-level security; diagnosis catalog, locations, and events are introduced by migration `005_phase2a_diagnosis_management.sql`, lifecycle fields, reassessments, and outcomes by migration `006_phase2b_diagnosis_lifecycle.sql`, and safety alerts and escalation rules by migration `007_phase2c_clinical_safety_alerts.sql`.
 
 ## Platform realm
 
@@ -92,6 +90,58 @@ Patient
 PatientMedicalHistory
   1 -- * ApprovalRequest
 
+DiagnosisCatalog
+  * -- 1 Organization
+  1 -- * VisitDiagnosis (optional catalog reference)
+
+VisitDiagnosis
+  * -- 1 Organization
+  * -- 1 Branch
+  * -- 1 Patient
+  * -- 1 PatientVisit
+  1 -- * VisitDiagnosisLocation
+  1 -- * VisitDiagnosisEvent
+  1 -- * VisitDiagnosisAssessment
+  1 -- * ClinicalOutcome
+  1 -- * ClinicalSafetyAlert (patient)
+  * -- * TreatmentPlanItem (planned)
+
+PatientVisit
+  1 -- * ClinicalSafetyAlert
+
+VisitDiagnosis
+  1 -- * ClinicalSafetyAlert (optional diagnosis link)
+
+ClinicalSafetyAlert
+  * -- 1 Patient
+  * -- 1 PatientVisit
+  * -- 0..1 VisitDiagnosis
+  1 -- * ClinicalSafetyAlertEvent
+  has clinician-set criticality and an append-only event history
+  acknowledgment records action taken; resolution requires prior acknowledgment
+
+ClinicalSafetyAlertRule
+  * -- 1 Organization
+  versions effective-dated escalation intervals and target roles
+  each change requires a reason and is audited
+
+VisitDiagnosisLocation
+  * -- 1 VisitDiagnosis
+  supports FDI tooth/surface locations and non-tooth anatomical areas
+
+VisitDiagnosisAssessment
+  * -- 1 VisitDiagnosis
+  * -- 1 PatientVisit
+  records progression, certainty, priority, severity, rationale, and findings
+  append-only; each reassessment is independently auditable
+
+ClinicalOutcome
+  * -- 1 VisitDiagnosis
+  * -- 1 PatientVisit
+  * -- 0..1 VisitDiagnosisAssessment
+  * -- 0..1 PerformedProcedure
+  records a clinical outcome separately from a diagnosis or procedure
+
 ClinicalRecordRevision (concept)
   * -- 1 Patient
   1 -- 0..1 previous revision
@@ -141,6 +191,9 @@ Examples:
 - `patient_attachments(organization_id, patient_id)` must reference a patient in the same organization.
 - `share_grants(originating_org_id, receiving_org_id, patient_id)` must reference a patient owned by the originating organization.
 - `audit_logs.organization_id` is required for clinic events and may be null for explicitly platform-only events.
+- `visit_diagnoses(organization_id, patient_id, visit_id, branch_id)` must agree with the visit and its patient/branch.
+- `visit_diagnosis_locations` validates FDI tooth numbering and supported tooth surfaces; anatomical-only diagnoses do not require a tooth.
+- Diagnosis catalog selection, diagnosis creation, and diagnosis-history writes are restricted by organization, branch, and role.
 
 Composite foreign keys are preferred to separate foreign keys whenever the child must preserve tenant consistency.
 

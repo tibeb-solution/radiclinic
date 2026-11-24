@@ -28,6 +28,27 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 type WorkspaceResult = { ok: true; data: DcmsLocalData } | { ok: false; error: string }
 type MutationResult<T = undefined> = { ok: true; value: T } | { ok: false; error: string }
 
+export type DiagnosisCatalogEntry = {
+  id: string
+  diagnosisName: string
+  diagnosisCode: string | null
+  codeSystem: string | null
+  category: string
+  description: string | null
+  anatomicalArea: string | null
+  requiresTooth: boolean
+}
+
+export type ClinicalSafetyAlertSummary = {
+  id: string
+  patientId: string
+  patientName: string
+  title: string
+  criticality: string
+  status: string
+  createdAt: string
+}
+
 type ProfileRow = {
   email: string
   full_name: string | null
@@ -1420,6 +1441,7 @@ export async function getAccountForPage(realm: AuthRealm): Promise<Authenticated
 }
 
 export type ClinicalPatientChart = {
+  currentUserId: string
   patient: {
     id: string
     patientNumber: string
@@ -1492,13 +1514,95 @@ export type ClinicalPatientChart = {
     visitId: string
     diagnosisName: string
     diagnosisCode: string | null
+    diagnosisCodeSystem: string | null
+    category: string
+    severity: string | null
+    certainty: string
+    priority: string
+    diagnosticReasoning: string | null
+    conflictingFindings: string | null
+    requiredInvestigations: string | null
+    priorityReason: string | null
     description: string | null
     anatomicalLocation: string | null
     toothNumber: string | null
     supportingFindings: string | null
+    clinicalNotes: string | null
     status: string
     diagnosedAt: string
+    locations: Array<{
+      toothNumber: string | null
+      toothSurface: string | null
+      anatomicalArea: string | null
+    }>
   }>
+  diagnosisAssessments: Array<{
+    id: string
+    diagnosisId: string
+    visitId: string
+    progression: string
+    status: string
+    certainty: string
+    priority: string
+    severity: string | null
+    assessmentReason: string
+    supportingFindings: string | null
+    conflictingFindings: string | null
+    requiredInvestigations: string | null
+    assessedAt: string
+  }>
+  clinicalOutcomes: Array<{
+    id: string
+    diagnosisId: string
+    visitId: string
+    assessmentId: string | null
+    performedProcedureId: string | null
+    outcome: string
+    clinicalFindings: string
+    complications: string | null
+    furtherTreatmentRequired: string | null
+    assessedAt: string
+  }>
+  clinicalSafetyAlerts: Array<{
+    id: string
+    visitId: string
+    diagnosisId: string | null
+    title: string
+    description: string
+    criticality: string
+    escalationAfterMinutes: number | null
+    escalationTargetRole: string
+    status: string
+    responsibleUserId: string | null
+    createdBy: string
+    createdAt: string
+    acknowledgedBy: string | null
+    acknowledgedAt: string | null
+    acknowledgmentAction: string | null
+    escalatedToRole: string | null
+    escalatedAt: string | null
+    resolvedBy: string | null
+    resolvedAt: string | null
+    resolutionReason: string | null
+    events: Array<{
+      id: string
+      eventType: string
+      actorId: string
+      details: Record<string, unknown>
+      createdAt: string
+    }>
+  }>
+  canCreateClinicalSafetyAlert: boolean
+  canAcknowledgeClinicalSafetyAlerts: boolean
+  clinicalSafetyAlertRules: Array<{
+    criticality: string
+    escalationAfterMinutes: number | null
+    escalationRole: string
+    changeReason: string
+  }>
+  canManageClinicalSafetyAlerts: boolean
+  canEscalateClinicalSafetyAlerts: boolean
+  canManageDiagnosisCatalog: boolean
   odontogram: Array<{
     id: string
     visitId: string | null
@@ -1644,6 +1748,10 @@ export async function getClinicalPatientChart(
     visitsResult,
     examinationsResult,
     diagnosesResult,
+    diagnosisAssessmentsResult,
+    clinicalOutcomesResult,
+    clinicalSafetyAlertsResult,
+    clinicalSafetyAlertRulesResult,
     odontogramResult,
     treatmentPlansResult,
     proceduresResult,
@@ -1656,7 +1764,11 @@ export async function getClinicalPatientChart(
     supabase.from('patient_vitals').select('id, visit_id, blood_pressure_systolic, blood_pressure_diastolic, pulse_bpm, temperature_c, respiratory_rate, oxygen_saturation, blood_glucose, weight_kg, height_cm, notes, source, recorded_at').eq('patient_id', patientId).order('recorded_at', { ascending: false }),
     supabase.from('patient_visits').select('id, branch_id, visit_number, visit_type, reason, chief_complaint, medical_history_reviewed, follow_up_instructions, clinical_notes, visited_at').eq('patient_id', patientId).order('visited_at', { ascending: false }),
     supabase.from('clinical_examinations').select('id, visit_id, history_of_present_illness, extraoral_examination, intraoral_examination, tooth_examination, periodontal_examination, soft_tissue_examination, radiographic_findings, other_observations, created_at, patient_visits!inner(patient_id)').eq('patient_visits.patient_id', patientId).order('created_at', { ascending: false }),
-    supabase.from('visit_diagnoses').select('id, visit_id, diagnosis_name, diagnosis_code, description, anatomical_location, tooth_number, supporting_findings, status, diagnosed_at, patient_visits!inner(patient_id)').eq('patient_visits.patient_id', patientId).order('diagnosed_at', { ascending: false }),
+    supabase.from('visit_diagnoses').select('id, visit_id, diagnosis_name, diagnosis_code, diagnosis_code_system, category, severity, certainty, priority, diagnostic_reasoning, conflicting_findings, required_investigations, priority_reason, description, anatomical_location, tooth_number, supporting_findings, clinical_notes, status, diagnosed_at, patient_visits!inner(patient_id)').eq('patient_visits.patient_id', patientId).order('diagnosed_at', { ascending: false }),
+    supabase.from('visit_diagnosis_assessments').select('id, diagnosis_id, visit_id, progression, status, certainty, priority, severity, assessment_reason, supporting_findings, conflicting_findings, required_investigations, assessed_at').eq('patient_id', patientId).order('assessed_at', { ascending: false }),
+    supabase.from('clinical_outcomes').select('id, diagnosis_id, visit_id, assessment_id, performed_procedure_id, outcome, clinical_findings, complications, further_treatment_required, assessed_at').eq('patient_id', patientId).order('assessed_at', { ascending: false }),
+    supabase.from('clinical_safety_alerts').select('id, visit_id, diagnosis_id, title, description, criticality, escalation_after_minutes, escalation_target_role, status, responsible_user_id, created_by, created_at, acknowledged_by, acknowledged_at, acknowledgment_action, escalated_to_role, escalated_at, resolved_by, resolved_at, resolution_reason').eq('patient_id', patientId).order('created_at', { ascending: false }),
+    supabase.from('clinical_safety_alert_rules').select('criticality, escalation_after_minutes, escalation_role, change_reason').eq('organization_id', account.clinicId).is('effective_until', null),
     supabase.from('odontogram_findings').select('id, visit_id, tooth_number, tooth_surface, finding, stage, notes, recorded_at').eq('patient_id', patientId).order('recorded_at', { ascending: false }),
     supabase.from('treatment_plans').select('id, title, status, created_at, treatment_plan_items(id, treatment_name, tooth_numbers, status, priority, estimated_cost, created_at)').eq('patient_id', patientId).order('created_at', { ascending: false }),
     supabase.from('performed_procedures').select('id, visit_id, treatment_plan_item_id, procedure_name, tooth_numbers, procedure_details, clinical_outcome, performed_at').eq('patient_id', patientId).order('performed_at', { ascending: false }),
@@ -1671,6 +1783,10 @@ export async function getClinicalPatientChart(
     ['visits', visitsResult],
     ['examinations', examinationsResult],
     ['diagnoses', diagnosesResult],
+    ['diagnosis reassessments', diagnosisAssessmentsResult],
+    ['clinical outcomes', clinicalOutcomesResult],
+    ['clinical safety alerts', clinicalSafetyAlertsResult],
+    ['clinical safety alert settings', clinicalSafetyAlertRulesResult],
     ['dental chart', odontogramResult],
     ['treatment plans', treatmentPlansResult],
     ['procedures', proceduresResult],
@@ -1687,6 +1803,10 @@ export async function getClinicalPatientChart(
   const visitRows = visitsResult.data ?? []
   const examinationRows = examinationsResult.data ?? []
   const diagnosisRows = diagnosesResult.data ?? []
+  const diagnosisAssessmentRows = diagnosisAssessmentsResult.data ?? []
+  const clinicalOutcomeRows = clinicalOutcomesResult.data ?? []
+  const clinicalSafetyAlertRows = clinicalSafetyAlertsResult.data ?? []
+  const clinicalSafetyAlertRuleRows = clinicalSafetyAlertRulesResult.data ?? []
   const odontogramRows = odontogramResult.data ?? []
   const treatmentPlanRows = treatmentPlansResult.data ?? []
   const procedureRows = proceduresResult.data ?? []
@@ -1694,10 +1814,33 @@ export async function getClinicalPatientChart(
   const consentRows = consentsResult.data ?? []
   const attachmentRows = attachmentsResult.data ?? []
   const clinicalRecordRows = clinicalRecordsResult.data ?? []
+  const diagnosisIds = diagnosisRows.map((diagnosis) => diagnosis.id)
+  const diagnosisLocationsResult = diagnosisIds.length
+    ? await supabase
+      .from('visit_diagnosis_locations')
+      .select('diagnosis_id, tooth_number, tooth_surface, anatomical_area')
+      .in('diagnosis_id', diagnosisIds)
+    : { data: [], error: null }
+  if (diagnosisLocationsResult.error) {
+    return { ok: false, error: `Could not load diagnosis locations: ${diagnosisLocationsResult.error.message}` }
+  }
+  const diagnosisLocations = diagnosisLocationsResult.data ?? []
+  const clinicalSafetyAlertIds = clinicalSafetyAlertRows.map((alert) => alert.id)
+  const clinicalSafetyAlertEventsResult = clinicalSafetyAlertIds.length
+    ? await supabase.from('clinical_safety_alert_events')
+      .select('id, alert_id, event_type, actor_id, details, created_at')
+      .in('alert_id', clinicalSafetyAlertIds)
+      .order('created_at', { ascending: false })
+    : { data: [], error: null }
+  if (clinicalSafetyAlertEventsResult.error) {
+    return { ok: false, error: `Could not load safety alert history: ${clinicalSafetyAlertEventsResult.error.message}` }
+  }
+  const clinicalSafetyAlertEventRows = clinicalSafetyAlertEventsResult.data ?? []
 
   return {
     ok: true,
     data: {
+      currentUserId: account.id,
       patient: {
         id: patient.id,
         patientNumber: patient.patient_number,
@@ -1770,13 +1913,118 @@ export async function getClinicalPatientChart(
         visitId: diagnosis.visit_id,
         diagnosisName: diagnosis.diagnosis_name,
         diagnosisCode: diagnosis.diagnosis_code,
+        diagnosisCodeSystem: diagnosis.diagnosis_code_system,
+        category: diagnosis.category,
+        severity: diagnosis.severity,
+        certainty: diagnosis.certainty,
+        priority: diagnosis.priority,
+        diagnosticReasoning: diagnosis.diagnostic_reasoning,
+        conflictingFindings: diagnosis.conflicting_findings,
+        requiredInvestigations: diagnosis.required_investigations,
+        priorityReason: diagnosis.priority_reason,
         description: diagnosis.description,
         anatomicalLocation: diagnosis.anatomical_location,
         toothNumber: diagnosis.tooth_number,
         supportingFindings: diagnosis.supporting_findings,
+        clinicalNotes: diagnosis.clinical_notes,
         status: diagnosis.status,
         diagnosedAt: diagnosis.diagnosed_at,
+        locations: diagnosisLocations
+          .filter((location) => location.diagnosis_id === diagnosis.id)
+          .map((location) => ({
+            toothNumber: location.tooth_number,
+            toothSurface: location.tooth_surface,
+            anatomicalArea: location.anatomical_area,
+          })),
       })),
+      diagnosisAssessments: diagnosisAssessmentRows.map((assessment) => ({
+        id: assessment.id,
+        diagnosisId: assessment.diagnosis_id,
+        visitId: assessment.visit_id,
+        progression: assessment.progression,
+        status: assessment.status,
+        certainty: assessment.certainty,
+        priority: assessment.priority,
+        severity: assessment.severity,
+        assessmentReason: assessment.assessment_reason,
+        supportingFindings: assessment.supporting_findings,
+        conflictingFindings: assessment.conflicting_findings,
+        requiredInvestigations: assessment.required_investigations,
+        assessedAt: assessment.assessed_at,
+      })),
+      clinicalOutcomes: clinicalOutcomeRows.map((outcome) => ({
+        id: outcome.id,
+        diagnosisId: outcome.diagnosis_id,
+        visitId: outcome.visit_id,
+        assessmentId: outcome.assessment_id,
+        performedProcedureId: outcome.performed_procedure_id,
+        outcome: outcome.outcome,
+        clinicalFindings: outcome.clinical_findings,
+        complications: outcome.complications,
+        furtherTreatmentRequired: outcome.further_treatment_required,
+        assessedAt: outcome.assessed_at,
+      })),
+      clinicalSafetyAlerts: clinicalSafetyAlertRows.map((alert) => ({
+        id: alert.id,
+        visitId: alert.visit_id,
+        diagnosisId: alert.diagnosis_id,
+        title: alert.title,
+        description: alert.description,
+        criticality: alert.criticality,
+        escalationAfterMinutes: alert.escalation_after_minutes,
+        escalationTargetRole: alert.escalation_target_role,
+        status: alert.status,
+        responsibleUserId: alert.responsible_user_id,
+        createdBy: alert.created_by,
+        createdAt: alert.created_at,
+        acknowledgedBy: alert.acknowledged_by,
+        acknowledgedAt: alert.acknowledged_at,
+        acknowledgmentAction: alert.acknowledgment_action,
+        escalatedToRole: alert.escalated_to_role,
+        escalatedAt: alert.escalated_at,
+        resolvedBy: alert.resolved_by,
+        resolvedAt: alert.resolved_at,
+        resolutionReason: alert.resolution_reason,
+        events: clinicalSafetyAlertEventRows
+          .filter((event) => event.alert_id === alert.id)
+          .map((event) => ({
+            id: event.id,
+            eventType: event.event_type,
+            actorId: event.actor_id,
+            details: event.details as Record<string, unknown>,
+            createdAt: event.created_at,
+          })),
+      })),
+      canCreateClinicalSafetyAlert: [
+          'organization_administrator',
+          'central_clinical_supervisor',
+          'branch_supervisor',
+          'doctor',
+          'nurse',
+      ].includes(account.role ?? ''),
+      canAcknowledgeClinicalSafetyAlerts: [
+          'organization_administrator',
+          'central_clinical_supervisor',
+          'branch_supervisor',
+          'doctor',
+          'nurse',
+      ].includes(account.role ?? ''),
+      clinicalSafetyAlertRules: clinicalSafetyAlertRuleRows.map((rule) => ({
+        criticality: rule.criticality,
+        escalationAfterMinutes: rule.escalation_after_minutes,
+        escalationRole: rule.escalation_role,
+        changeReason: rule.change_reason,
+      })),
+      canManageClinicalSafetyAlerts: [
+        'organization_administrator',
+        'central_clinical_supervisor',
+      ].includes(account.role ?? ''),
+      canEscalateClinicalSafetyAlerts: [
+        'organization_administrator',
+        'central_clinical_supervisor',
+        'branch_supervisor',
+      ].includes(account.role ?? ''),
+      canManageDiagnosisCatalog: account.role === 'organization_administrator',
       odontogram: odontogramRows.map((finding) => ({
         id: finding.id,
         visitId: finding.visit_id,
@@ -1997,33 +2245,398 @@ export async function updateClinicPatientProfile(input: {
 
 export async function addVisitDiagnosis(input: {
   visitId: string
+  catalogEntryId: string
   name: string
   code: string
+  codeSystem: string
+  category: string
   description: string
   location: string
-  toothNumber: string
+  toothNumbers: string[]
+  toothSurface: string
+  severity: string
   findings: string
+  clinicalNotes: string
+  certainty: string
+  priority: string
+  reasoning: string
+  conflictingFindings: string
+  requiredInvestigations: string
+  priorityReason: string
 }): Promise<ActionResult> {
   const account = await clinicAccount()
   if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
   if (!input.visitId || !input.name.trim()) return { ok: false, error: 'Choose a visit and enter a diagnosis.' }
   const supabase = await createSupabaseServerClient()
-  const { data, error } = await supabase.from('visit_diagnoses').insert({
-    organization_id: account.clinicId,
-    visit_id: input.visitId,
-    diagnosis_name: input.name.trim(),
-    diagnosis_code: input.code.trim() || null,
-    description: input.description.trim() || null,
-    anatomical_location: input.location.trim() || null,
-    tooth_number: input.toothNumber.trim() || null,
-    supporting_findings: input.findings.trim() || null,
-    diagnosed_by: account.id,
-  }).select('id').single()
+  const { error } = await supabase.rpc('record_visit_diagnosis_v2', {
+    target_visit_id: input.visitId,
+    target_catalog_entry_id: input.catalogEntryId || null,
+    input_diagnosis_name: input.name.trim(),
+    input_diagnosis_code: input.code.trim() || null,
+    input_code_system: input.codeSystem.trim() || null,
+    input_category: input.category,
+    input_description: input.description.trim() || null,
+    input_anatomical_location: input.location.trim() || null,
+    input_tooth_numbers: input.toothNumbers,
+    input_tooth_surface: input.toothSurface,
+    input_severity: input.severity,
+    input_supporting_findings: input.findings.trim() || null,
+    input_clinical_notes: input.clinicalNotes.trim() || null,
+    input_certainty: input.certainty,
+    input_priority: input.priority,
+    input_diagnostic_reasoning: input.reasoning.trim(),
+    input_conflicting_findings: input.conflictingFindings.trim() || null,
+    input_required_investigations: input.requiredInvestigations.trim() || null,
+    input_priority_reason: input.priorityReason.trim() || null,
+  })
   if (error) return { ok: false, error: error.message }
-  const auditError = await writeAuditEvent(account, 'diagnosis.create', 'visit_diagnosis', data.id)
-  if (auditError) return { ok: false, error: auditError }
   revalidatePath('/')
   return { ok: true }
+}
+
+export async function updateVisitDiagnosisState(input: {
+  diagnosisId: string
+  status: string
+  certainty: string
+  priority: string
+  reason: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.diagnosisId || !input.reason.trim()) {
+    return { ok: false, error: 'Choose a diagnosis and document the reason for the change.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('update_visit_diagnosis_state', {
+    target_diagnosis_id: input.diagnosisId,
+    input_status: input.status,
+    input_certainty: input.certainty,
+    input_priority: input.priority,
+    input_reason: input.reason.trim(),
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function recordDiagnosisReassessment(input: {
+  diagnosisId: string
+  visitId: string
+  status: string
+  certainty: string
+  priority: string
+  severity: string
+  progression: string
+  reason: string
+  supportingFindings: string
+  conflictingFindings: string
+  requiredInvestigations: string
+  priorityReason: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.diagnosisId || !input.visitId || !input.reason.trim()) {
+    return { ok: false, error: 'Choose a diagnosis and visit, then document the reassessment.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('record_diagnosis_reassessment', {
+    target_diagnosis_id: input.diagnosisId,
+    target_visit_id: input.visitId,
+    input_status: input.status,
+    input_certainty: input.certainty,
+    input_priority: input.priority,
+    input_severity: input.severity || null,
+    input_progression: input.progression,
+    input_assessment_reason: input.reason.trim(),
+    input_supporting_findings: input.supportingFindings.trim() || null,
+    input_conflicting_findings: input.conflictingFindings.trim() || null,
+    input_required_investigations: input.requiredInvestigations.trim() || null,
+    input_priority_reason: input.priorityReason.trim() || null,
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function recordClinicalOutcome(input: {
+  diagnosisId: string
+  visitId: string
+  assessmentId: string
+  procedureId: string
+  outcome: string
+  clinicalFindings: string
+  complications: string
+  furtherTreatmentRequired: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.diagnosisId || !input.visitId || !input.clinicalFindings.trim()) {
+    return { ok: false, error: 'Choose a diagnosis and visit, and record the clinical findings.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('record_clinical_outcome', {
+    target_diagnosis_id: input.diagnosisId,
+    target_visit_id: input.visitId,
+    target_assessment_id: input.assessmentId || null,
+    target_procedure_id: input.procedureId || null,
+    input_outcome: input.outcome,
+    input_clinical_findings: input.clinicalFindings.trim(),
+    input_complications: input.complications.trim() || null,
+    input_further_treatment_required: input.furtherTreatmentRequired.trim() || null,
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function getOpenClinicalSafetyAlerts(): Promise<MutationResult<ClinicalSafetyAlertSummary[]>> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  const supabase = await createSupabaseServerClient()
+  const { data: alerts, error } = await supabase
+    .from('clinical_safety_alerts')
+    .select('id, patient_id, title, criticality, status, created_at')
+    .eq('organization_id', account.clinicId)
+    .in('status', ['open', 'escalated'])
+    .order('created_at', { ascending: true })
+    .limit(50)
+  if (error) return { ok: false, error: `Could not load open clinical alerts: ${error.message}` }
+  const patientIds = [...new Set((alerts ?? []).map((alert) => alert.patient_id))]
+  const { data: patients, error: patientsError } = patientIds.length
+    ? await supabase.from('patients').select('id, full_name').in('id', patientIds)
+    : { data: [], error: null }
+  if (patientsError) return { ok: false, error: `Could not load clinical alert patient names: ${patientsError.message}` }
+  const patientNames = new Map((patients ?? []).map((patient) => [patient.id, patient.full_name]))
+  return {
+    ok: true,
+    value: (alerts ?? []).map((alert) => ({
+      id: alert.id,
+      patientId: alert.patient_id,
+      patientName: patientNames.get(alert.patient_id) ?? 'Patient record',
+      title: alert.title,
+      criticality: alert.criticality,
+      status: alert.status,
+      createdAt: alert.created_at,
+    })),
+  }
+}
+
+export async function createClinicalSafetyAlert(input: {
+  patientId: string
+  visitId: string
+  diagnosisId: string
+  title: string
+  description: string
+  criticality: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.patientId || !input.visitId || !input.title.trim() || !input.description.trim()) {
+    return { ok: false, error: 'Choose a visit and document the finding that needs attention.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('create_clinical_safety_alert', {
+    target_patient_id: input.patientId,
+    target_visit_id: input.visitId,
+    target_diagnosis_id: input.diagnosisId || null,
+    input_title: input.title.trim(),
+    input_description: input.description.trim(),
+    input_criticality: input.criticality,
+    target_responsible_user_id: account.id,
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function acknowledgeClinicalSafetyAlert(
+  alertId: string,
+  actionTaken: string
+): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!alertId || !actionTaken.trim()) {
+    return { ok: false, error: 'Document the action taken before acknowledging the alert.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('acknowledge_clinical_safety_alert', {
+    target_alert_id: alertId,
+    input_action_taken: actionTaken.trim(),
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function escalateClinicalSafetyAlert(
+  alertId: string,
+  targetRole: string,
+  reason: string
+): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!alertId || !reason.trim()) return { ok: false, error: 'Document why this alert is being escalated.' }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('escalate_clinical_safety_alert', {
+    target_alert_id: alertId,
+    input_target_role: targetRole,
+    input_reason: reason.trim(),
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function resolveClinicalSafetyAlert(
+  alertId: string,
+  resolutionReason: string
+): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!alertId || !resolutionReason.trim()) {
+    return { ok: false, error: 'Document why the safety alert can be resolved.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('resolve_clinical_safety_alert', {
+    target_alert_id: alertId,
+    input_resolution_reason: resolutionReason.trim(),
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function configureClinicalSafetyAlertRule(input: {
+  criticality: string
+  escalationAfterMinutes: number | null
+  escalationRole: string
+  changeReason: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  if (!input.changeReason.trim()) return { ok: false, error: 'Record the reason for changing alert escalation settings.' }
+  if (input.escalationAfterMinutes !== null
+    && (!Number.isInteger(input.escalationAfterMinutes)
+      || input.escalationAfterMinutes < 1
+      || input.escalationAfterMinutes > 10080)) {
+    return { ok: false, error: 'Escalation interval must be between 1 minute and 7 days, or left blank for manual escalation.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('configure_clinical_safety_alert_rule', {
+    target_organization_id: account.clinicId,
+    input_criticality: input.criticality,
+    input_escalation_after_minutes: input.escalationAfterMinutes,
+    input_escalation_role: input.escalationRole,
+    input_change_reason: input.changeReason.trim(),
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function searchDiagnosisCatalog(
+  query: string
+): Promise<MutationResult<DiagnosisCatalogEntry[]>> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Your clinic session has expired. Sign in again.' }
+  const term = query.trim()
+  if (term.length < 2) return { ok: true, value: [] }
+  if (term.length > 100) return { ok: false, error: 'Search text must be 100 characters or fewer.' }
+
+  const escapedTerm = term.replace(/[\\%_]/g, '\\$&')
+  const pattern = `%${escapedTerm}%`
+  const supabase = await createSupabaseServerClient()
+  const [nameResult, codeResult] = await Promise.all([
+    supabase.from('diagnosis_catalog')
+      .select('id, diagnosis_name, diagnosis_code, code_system, category, description, anatomical_area, requires_tooth')
+      .eq('organization_id', account.clinicId)
+      .eq('is_active', true)
+      .ilike('diagnosis_name', pattern)
+      .order('diagnosis_name')
+      .limit(20),
+    supabase.from('diagnosis_catalog')
+      .select('id, diagnosis_name, diagnosis_code, code_system, category, description, anatomical_area, requires_tooth')
+      .eq('organization_id', account.clinicId)
+      .eq('is_active', true)
+      .ilike('diagnosis_code', pattern)
+      .order('diagnosis_code')
+      .limit(20),
+  ])
+  if (nameResult.error || codeResult.error) {
+    return { ok: false, error: `Could not search diagnosis catalog: ${(nameResult.error ?? codeResult.error)?.message}` }
+  }
+  const entries = new Map<string, DiagnosisCatalogEntry>()
+  for (const row of [...(nameResult.data ?? []), ...(codeResult.data ?? [])]) {
+    entries.set(row.id, {
+      id: row.id,
+      diagnosisName: row.diagnosis_name,
+      diagnosisCode: row.diagnosis_code,
+      codeSystem: row.code_system,
+      category: row.category,
+      description: row.description,
+      anatomicalArea: row.anatomical_area,
+      requiresTooth: row.requires_tooth,
+    })
+  }
+  return { ok: true, value: [...entries.values()].slice(0, 25) }
+}
+
+export async function addDiagnosisCatalogEntry(input: {
+  name: string
+  code: string
+  codeSystem: string
+  category: string
+  description: string
+  anatomicalArea: string
+  requiresTooth: boolean
+}): Promise<MutationResult<DiagnosisCatalogEntry>> {
+  const account = await clinicAccount(true)
+  if (!account) return { ok: false, error: 'Only a clinic administrator can add diagnosis catalog entries.' }
+  if (!input.name.trim() || input.name.trim().length > 200) {
+    return { ok: false, error: 'Enter a diagnosis name up to 200 characters.' }
+  }
+  const categories = [
+    'general_medical', 'dental', 'periodontal', 'oral_surgery',
+    'restorative', 'endodontic', 'orthodontic', 'prosthodontic', 'other',
+  ]
+  if (!categories.includes(input.category)) {
+    return { ok: false, error: 'Choose a valid diagnosis category.' }
+  }
+  if (input.code.trim().length > 50 || input.codeSystem.trim().length > 40) {
+    return { ok: false, error: 'Diagnosis codes are limited to 50 characters and code systems to 40.' }
+  }
+  if (input.description.trim().length > 1500 || input.anatomicalArea.trim().length > 200) {
+    return { ok: false, error: 'The description or anatomical area is too long.' }
+  }
+
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('diagnosis_catalog').insert({
+    organization_id: account.clinicId,
+    diagnosis_name: input.name.trim(),
+    diagnosis_code: input.code.trim() || null,
+    code_system: input.codeSystem.trim() || null,
+    category: input.category,
+    description: input.description.trim() || null,
+    anatomical_area: input.anatomicalArea.trim() || null,
+    requires_tooth: input.requiresTooth,
+    created_by: account.id,
+  }).select('id, diagnosis_name, diagnosis_code, code_system, category, description, anatomical_area, requires_tooth').single()
+  if (error) return { ok: false, error: error.message }
+
+  revalidatePath('/')
+  return {
+    ok: true,
+    value: {
+      id: data.id,
+      diagnosisName: data.diagnosis_name,
+      diagnosisCode: data.diagnosis_code,
+      codeSystem: data.code_system,
+      category: data.category,
+      description: data.description,
+      anatomicalArea: data.anatomical_area,
+      requiresTooth: data.requires_tooth,
+    },
+  }
 }
 
 export async function addOdontogramFinding(input: {
