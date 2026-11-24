@@ -18,11 +18,13 @@ import {
   recordPerformedProcedure,
   recordClinicalOutcome,
   recordDiagnosisReassessment,
+  reviewDiagnosisCatalogProposal,
   resolveClinicalSafetyAlert,
   escalateClinicalSafetyAlert,
   reviewClinicalRecord,
   searchDiagnosisCatalog,
   submitClinicalRecord,
+  updateClinicalVisitCaseType,
   updateTreatmentPlanItemStatus,
   uploadClinicalAttachment,
   updateClinicPatientProfile,
@@ -44,6 +46,70 @@ const primaryTeeth = [
   '55', '54', '53', '52', '51', '61', '62', '63', '64', '65',
   '85', '84', '83', '82', '81', '71', '72', '73', '74', '75',
 ]
+
+const diagnosisCaseTypes = [
+  ['general_dentistry', 'General dentistry'],
+  ['orthodontic', 'Orthodontics'],
+  ['endodontic', 'Endodontics'],
+  ['periodontal', 'Periodontics'],
+  ['oral_surgery', 'Oral surgery'],
+  ['restorative', 'Restorative dentistry'],
+  ['prosthodontic', 'Prosthodontics'],
+] as const
+
+const diagnosisSuggestions: Record<string, Array<{ name: string; category: string }>> = {
+  general_dentistry: [
+    { name: 'Dental caries', category: 'restorative' },
+    { name: 'Tooth fracture', category: 'restorative' },
+    { name: 'Tooth sensitivity', category: 'dental' },
+    { name: 'Gingivitis', category: 'periodontal' },
+    { name: 'Dental pulpitis', category: 'endodontic' },
+  ],
+  orthodontic: [
+    { name: 'Malocclusion', category: 'orthodontic' },
+    { name: 'Dental crowding', category: 'orthodontic' },
+    { name: 'Dental spacing', category: 'orthodontic' },
+    { name: 'Crossbite', category: 'orthodontic' },
+    { name: 'Increased overjet', category: 'orthodontic' },
+    { name: 'Open bite', category: 'orthodontic' },
+    { name: 'Deep bite', category: 'orthodontic' },
+  ],
+  endodontic: [
+    { name: 'Reversible pulpitis', category: 'endodontic' },
+    { name: 'Irreversible pulpitis', category: 'endodontic' },
+    { name: 'Pulp necrosis', category: 'endodontic' },
+    { name: 'Apical periodontitis', category: 'endodontic' },
+    { name: 'Periapical abscess', category: 'endodontic' },
+  ],
+  periodontal: [
+    { name: 'Gingivitis', category: 'periodontal' },
+    { name: 'Periodontitis', category: 'periodontal' },
+    { name: 'Gingival recession', category: 'periodontal' },
+    { name: 'Periodontal pocketing', category: 'periodontal' },
+  ],
+  oral_surgery: [
+    { name: 'Impacted tooth', category: 'oral_surgery' },
+    { name: 'Pericoronitis', category: 'oral_surgery' },
+    { name: 'Retained tooth root', category: 'oral_surgery' },
+    { name: 'Oral soft-tissue lesion', category: 'oral_surgery' },
+  ],
+  restorative: [
+    { name: 'Dental caries', category: 'restorative' },
+    { name: 'Tooth fracture', category: 'restorative' },
+    { name: 'Defective restoration', category: 'restorative' },
+    { name: 'Tooth wear', category: 'restorative' },
+  ],
+  prosthodontic: [
+    { name: 'Partial edentulism', category: 'prosthodontic' },
+    { name: 'Complete edentulism', category: 'prosthodontic' },
+    { name: 'Tooth loss', category: 'prosthodontic' },
+    { name: 'Failed dental prosthesis', category: 'prosthodontic' },
+  ],
+}
+
+function categoryForCaseType(caseType: string): string {
+  return caseType === 'general_dentistry' ? 'dental' : caseType
+}
 
 function ageAt(dateOfBirth: string | null): number | null {
   if (!dateOfBirth) return null
@@ -96,6 +162,7 @@ export function PatientClinicalChart({
   const [openingAttachment, setOpeningAttachment] = useState('')
   const [updatingTreatmentId, setUpdatingTreatmentId] = useState('')
   const [diagnosisSearch, setDiagnosisSearch] = useState('')
+  const [diagnosisSearchCategory, setDiagnosisSearchCategory] = useState('dental')
   const [diagnosisCatalogResults, setDiagnosisCatalogResults] = useState<DiagnosisCatalogEntry[]>([])
   const [selectedCatalogEntry, setSelectedCatalogEntry] = useState<DiagnosisCatalogEntry | null>(null)
   const [searchingDiagnosisCatalog, setSearchingDiagnosisCatalog] = useState(false)
@@ -105,6 +172,9 @@ export function PatientClinicalChart({
   const [diagnosisCategory, setDiagnosisCategory] = useState('dental')
   const [diagnosisDescription, setDiagnosisDescription] = useState('')
   const [diagnosisLocation, setDiagnosisLocation] = useState('')
+  const [diagnosisCaseType, setDiagnosisCaseType] = useState('general_dentistry')
+  const [proposalCatalogSearch, setProposalCatalogSearch] = useState('')
+  const [proposalCatalogResults, setProposalCatalogResults] = useState<DiagnosisCatalogEntry[]>([])
 
   useEffect(() => {
     let active = true
@@ -118,7 +188,7 @@ export function PatientClinicalChart({
     const timeout = window.setTimeout(async () => {
       setSearchingDiagnosisCatalog(true)
       try {
-        const result = await searchDiagnosisCatalog(query)
+        const result = await searchDiagnosisCatalog(query, diagnosisSearchCategory)
         if (!active) return
         if (result.ok) {
           setDiagnosisCatalogResults(result.value)
@@ -140,7 +210,7 @@ export function PatientClinicalChart({
       active = false
       window.clearTimeout(timeout)
     }
-  }, [diagnosisSearch])
+  }, [diagnosisSearch, diagnosisSearchCategory])
 
   const reload = useCallback(async () => {
     try {
@@ -172,6 +242,11 @@ export function PatientClinicalChart({
     () => chart?.visits.find((visit) => visit.id === selectedVisitId) ?? null,
     [chart, selectedVisitId]
   )
+  useEffect(() => {
+    if (!selectedVisit) return
+    setDiagnosisCaseType(selectedVisit.caseType)
+    setDiagnosisSearchCategory(categoryForCaseType(selectedVisit.caseType))
+  }, [selectedVisit?.id, selectedVisit?.caseType])
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -199,6 +274,33 @@ export function PatientClinicalChart({
       setNotice(successMessage)
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'The change could not be saved.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function changeDiagnosisCaseType(caseType: string) {
+    if (!selectedVisit || caseType === selectedVisit.caseType) return
+    const previousCaseType = selectedVisit.caseType
+    setDiagnosisCaseType(caseType)
+    setDiagnosisSearchCategory(categoryForCaseType(caseType))
+    setSaving(true)
+    setFormError('')
+    setNotice('')
+    try {
+      const result = await updateClinicalVisitCaseType(selectedVisit.id, caseType)
+      if (!result.ok) {
+        setDiagnosisCaseType(previousCaseType)
+        setDiagnosisSearchCategory(categoryForCaseType(previousCaseType))
+        setFormError(result.error)
+        return
+      }
+      if (!await reload()) return
+      setNotice('Visit case type updated. Previously recorded diagnoses are unchanged.')
+    } catch (error) {
+      setDiagnosisCaseType(previousCaseType)
+      setDiagnosisSearchCategory(categoryForCaseType(previousCaseType))
+      setFormError(error instanceof Error ? error.message : 'Visit case type could not be updated.')
     } finally {
       setSaving(false)
     }
@@ -241,6 +343,49 @@ export function PatientClinicalChart({
       setNotice('Diagnosis added to the clinic catalog.')
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Could not add the diagnosis to the clinic catalog.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function searchProposalCatalog() {
+    try {
+      const result = await searchDiagnosisCatalog(proposalCatalogSearch, 'all')
+      if (!result.ok) {
+        setFormError(result.error)
+        return
+      }
+      setProposalCatalogResults(result.value)
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Could not search the clinic catalog.')
+    }
+  }
+
+  async function submitProposalReview(event: FormEvent<HTMLFormElement>, proposalId: string) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    setSaving(true)
+    setFormError('')
+    setNotice('')
+    try {
+      const result = await reviewDiagnosisCatalogProposal({
+        proposalId,
+        decision: String(form.get('proposalDecision') ?? '') as 'approved' | 'rejected' | 'clarification_requested' | 'merged',
+        notes: String(form.get('proposalNotes') ?? ''),
+        diagnosisName: String(form.get('proposalName') ?? ''),
+        diagnosisCode: String(form.get('proposalCode') ?? ''),
+        codeSystem: String(form.get('proposalCodeSystem') ?? ''),
+        category: String(form.get('proposalCategory') ?? ''),
+        catalogEntryId: String(form.get('proposalCatalogEntry') ?? ''),
+      })
+      if (!result.ok) {
+        setFormError(result.error)
+        return
+      }
+      if (!await reload()) return
+      setNotice('Diagnosis catalog proposal review recorded.')
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'The catalog proposal review could not be saved.')
     } finally {
       setSaving(false)
     }
@@ -420,6 +565,7 @@ export function PatientClinicalChart({
             patientId,
             branchId,
             visitType: value('visitType'),
+            caseType: value('caseType'),
             reason: value('reason'),
             chiefComplaint: value('chiefComplaint'),
             historyReviewed: form.get('historyReviewed') === 'on',
@@ -453,6 +599,9 @@ export function PatientClinicalChart({
         }, 'New encounter saved with examination and recorded measurements.')}>
           <div className="clinical-grid">
             <Field label="Visit type"><select name="visitType"><option value="consultation">Consultation</option><option value="emergency">Emergency</option><option value="follow_up">Follow-up</option><option value="procedure">Procedure</option></select></Field>
+            <Field label="Clinical case type"><select name="caseType" defaultValue="general_dentistry">
+              {diagnosisCaseTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select></Field>
             <Field label="Reason for visit"><input name="reason" maxLength={500} /></Field>
           </div>
           <Field label="Chief complaint"><textarea name="chiefComplaint" rows={2} maxLength={1500} /></Field>
@@ -536,6 +685,9 @@ export function PatientClinicalChart({
               conflictingFindings: String(form.get('diagnosisConflictingFindings') ?? ''),
               requiredInvestigations: String(form.get('diagnosisInvestigations') ?? ''),
               priorityReason: String(form.get('diagnosisPriorityReason') ?? ''),
+              caseType: diagnosisCaseType,
+              overrideReason: String(form.get('diagnosisOverrideReason') ?? ''),
+              proposeForCatalog: form.get('diagnosisProposeForCatalog') === 'on',
             }), 'Diagnosis added to the selected visit.', true, () => {
               setSelectedCatalogEntry(null)
               setDiagnosisSearch('')
@@ -547,13 +699,42 @@ export function PatientClinicalChart({
               setDiagnosisLocation('')
             })}>
             <h3>Add diagnosis</h3>
-            <Field label="Search clinic diagnosis catalog">
+            <div className="clinical-grid">
+              <Field label="Clinical case type"><select value={diagnosisCaseType} onChange={(event) => void changeDiagnosisCaseType(event.target.value)} disabled={saving}>
+                {diagnosisCaseTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select></Field>
+              <Field label="Search diagnosis category"><select value={diagnosisSearchCategory} onChange={(event) => setDiagnosisSearchCategory(event.target.value)}>
+                <option value={categoryForCaseType(diagnosisCaseType)}>Current specialty recommendations</option>
+                <option value="all">Other categories (search only)</option>
+                <option value="general_medical">General medical</option><option value="dental">Dental</option><option value="periodontal">Periodontal</option><option value="oral_surgery">Oral surgery</option><option value="restorative">Restorative</option><option value="endodontic">Endodontic</option><option value="orthodontic">Orthodontic</option><option value="prosthodontic">Prosthodontic</option><option value="other">Other</option>
+              </select></Field>
+            </div>
+            <p className="workspace-help-copy">Recommendations are suggestions only. The clinician selects and documents every diagnosis.</p>
+            <div className="diagnosis-recommendation-list" aria-label="Specialty diagnosis recommendations">
+              {(diagnosisSuggestions[diagnosisCaseType] ?? [])
+                .filter((suggestion) => !diagnosisSearch.trim()
+                  || suggestion.name.toLowerCase().includes(diagnosisSearch.trim().toLowerCase()))
+                .map((suggestion) => (
+                  <button
+                    type="button"
+                    key={`${suggestion.category}-${suggestion.name}`}
+                    className="diagnosis-recommendation"
+                    onClick={() => {
+                      setDiagnosisName(suggestion.name)
+                      setDiagnosisCategory(suggestion.category)
+                      setSelectedCatalogEntry(null)
+                      setDiagnosisSearch('')
+                    }}
+                  >{suggestion.name}</button>
+                ))}
+            </div>
+            <Field label="Search clinic diagnosis catalog in the selected category">
               <input
                 value={diagnosisSearch}
                 onChange={(event) => setDiagnosisSearch(event.target.value)}
                 maxLength={100}
-                placeholder="Search by diagnosis name or code"
-                aria-label="Search clinic diagnosis catalog"
+                placeholder="Type at least two characters to search"
+                aria-label="Search clinic diagnosis catalog by selected category"
               />
             </Field>
             {searchingDiagnosisCatalog && <p className="chart-empty" aria-live="polite">Searching diagnoses…</p>}
@@ -574,6 +755,7 @@ export function PatientClinicalChart({
               ))}
             </div>}
             {selectedCatalogEntry && <p className="chart-notice">Selected from the clinic catalog. You can still add visit-specific findings and notes.</p>}
+            {!selectedCatalogEntry && diagnosisName && <p className="workspace-help-copy">Manual diagnosis entry. This patient diagnosis will not change the clinic catalog.</p>}
             <Field label="Diagnosis"><input name="diagnosisName" value={diagnosisName} onChange={(event) => {
               setDiagnosisName(event.target.value)
               setSelectedCatalogEntry(null)
@@ -606,6 +788,37 @@ export function PatientClinicalChart({
             <Field label="Required investigations (optional)"><textarea name="diagnosisInvestigations" rows={2} maxLength={2000} /></Field>
             <Field label="Reason for non-routine priority (required for priority, urgent, or emergency)"><textarea name="diagnosisPriorityReason" rows={2} maxLength={1000} /></Field>
             <Field label="Clinical notes"><textarea name="diagnosisClinicalNotes" rows={2} maxLength={1500} /></Field>
+            {diagnosisCaseType !== 'general_dentistry'
+              && diagnosisCategory !== diagnosisCaseType
+              && diagnosisCategory !== 'general_medical'
+              && diagnosisCategory !== 'other'
+              && <p className="diagnosis-relevance-warning" role="status">
+                This diagnosis category differs from the selected {diagnosisCaseType.replaceAll('_', ' ')} case. Add a clinical justification to continue; the diagnosis will still be recorded under its own category.
+              </p>}
+            {diagnosisName && chart.diagnoses.some((diagnosis) =>
+              diagnosis.visitId === selectedVisit.id
+              && diagnosis.status !== 'entered_in_error'
+              && diagnosis.category === diagnosisCategory
+              && diagnosis.diagnosisName.trim().toLowerCase() === diagnosisName.trim().toLowerCase()
+            ) && <p className="diagnosis-relevance-warning" role="status">
+              A diagnosis with this name and category is already recorded for this visit. Review it before adding a duplicate; an explanation is required to proceed.
+            </p>}
+            {((diagnosisCaseType !== 'general_dentistry'
+              && diagnosisCategory !== diagnosisCaseType
+              && diagnosisCategory !== 'general_medical'
+              && diagnosisCategory !== 'other')
+              || (diagnosisName && chart.diagnoses.some((diagnosis) =>
+                diagnosis.visitId === selectedVisit.id
+                && diagnosis.status !== 'entered_in_error'
+                && diagnosis.category === diagnosisCategory
+                && diagnosis.diagnosisName.trim().toLowerCase() === diagnosisName.trim().toLowerCase()
+              ))) && <Field label="Clinical justification for the specialty override or repeat diagnosis">
+                <textarea name="diagnosisOverrideReason" rows={2} maxLength={1000} required />
+              </Field>}
+            {!selectedCatalogEntry && <label className="clinical-check">
+              <input name="diagnosisProposeForCatalog" type="checkbox" />
+              Propose this manually entered diagnosis for clinical catalog review (does not approve or alter the patient diagnosis)
+            </label>}
             <button className="secondary-button" disabled={saving}><Plus /> Add diagnosis</button>
           </form>
           {chart.canManageDiagnosisCatalog && <details className="chart-catalog-editor">
@@ -630,6 +843,13 @@ export function PatientClinicalChart({
               <strong>{diagnosis.diagnosisName}</strong>
               {diagnosis.diagnosisCode && <span>{diagnosis.diagnosisCode}{diagnosis.diagnosisCodeSystem ? ` · ${diagnosis.diagnosisCodeSystem}` : ''}</span>}
               <small>{diagnosis.category.replaceAll('_', ' ')} · {diagnosis.status.replaceAll('_', ' ')} · {diagnosis.certainty} · {diagnosis.priority}{diagnosis.severity ? ` · ${diagnosis.severity}` : ''} · recorded {dateTime(diagnosis.diagnosedAt)}</small>
+              {!diagnosis.catalogEntryId && <small>Manually entered; not part of the clinic catalog.</small>}
+              {chart.diagnosisCaseDecisions.filter((decision) => decision.diagnosisId === diagnosis.id).map((decision) => (
+                <small key={`${decision.diagnosisId}-${decision.recordedAt}`}>
+                  Case: {decision.selectedCaseType.replaceAll('_', ' ')}
+                  {decision.overrideReason && ` · Clinical justification: ${decision.overrideReason}`}
+                </small>
+              ))}
               {diagnosis.description && <p>{diagnosis.description}</p>}
               {diagnosis.diagnosticReasoning && <p>Reasoning: {diagnosis.diagnosticReasoning}</p>}
               {diagnosis.supportingFindings && <p>Findings: {diagnosis.supportingFindings}</p>}
@@ -734,6 +954,55 @@ export function PatientClinicalChart({
               </details>}
             </article>
           ))}</div>}
+          {chart.canReviewDiagnosisCatalogProposals && chart.diagnosisCatalogProposals.length > 0 && <section className="chart-panel">
+            <h3>Diagnosis catalog proposals</h3>
+            <p className="workspace-help-copy">Reviewing a proposal affects the shared clinic catalog only; it does not approve or change the patient-specific diagnosis.</p>
+            <Field label="Search clinic catalog for an entry to merge into">
+              <input value={proposalCatalogSearch} onChange={(event) => setProposalCatalogSearch(event.target.value)} maxLength={100} />
+            </Field>
+            <button type="button" className="secondary-button" disabled={saving || proposalCatalogSearch.trim().length < 2} onClick={() => void searchProposalCatalog()}>
+              Search catalog
+            </button>
+            {proposalCatalogResults.length > 0 && <div className="chart-visit-list" role="list">
+              {proposalCatalogResults.map((entry) => (
+                <p key={entry.id}><strong>{entry.diagnosisName}</strong> · {entry.category.replaceAll('_', ' ')}{entry.diagnosisCode ? ` · ${entry.diagnosisCode}` : ''}</p>
+              ))}
+            </div>}
+            {chart.diagnosisCatalogProposals.map((proposal) => (
+              <article className="chart-record-card" key={proposal.id}>
+                <strong>{proposal.diagnosisName}</strong>
+                <small>{proposal.category.replaceAll('_', ' ')} · proposed {dateTime(proposal.submittedAt)}</small>
+                {proposal.diagnosisCode && <small>{proposal.diagnosisCode}{proposal.codeSystem ? ` · ${proposal.codeSystem}` : ''}</small>}
+                {proposal.description && <p>{proposal.description}</p>}
+                <form className="clinical-form clinical-subform" onSubmit={(event) => void submitProposalReview(event, proposal.id)}>
+                  <Field label="Review decision"><select name="proposalDecision" defaultValue="approved">
+                    <option value="approved">Approve into clinic catalog</option>
+                    <option value="merged">Merge with an existing catalog entry</option>
+                    <option value="clarification_requested">Request clarification</option>
+                    <option value="rejected">Reject proposal</option>
+                  </select></Field>
+                  <div className="clinical-grid">
+                    <Field label="Catalog diagnosis name"><input name="proposalName" defaultValue={proposal.diagnosisName} maxLength={200} /></Field>
+                    <Field label="Code"><input name="proposalCode" defaultValue={proposal.diagnosisCode ?? ''} maxLength={50} /></Field>
+                    <Field label="Code system"><input name="proposalCodeSystem" defaultValue={proposal.codeSystem ?? ''} maxLength={40} /></Field>
+                    <Field label="Category"><select name="proposalCategory" defaultValue={proposal.category}>
+                      <option value="general_medical">General medical</option><option value="dental">Dental</option><option value="periodontal">Periodontal</option><option value="oral_surgery">Oral surgery</option><option value="restorative">Restorative</option><option value="endodontic">Endodontic</option><option value="orthodontic">Orthodontic</option><option value="prosthodontic">Prosthodontic</option><option value="other">Other</option>
+                    </select></Field>
+                    <Field label="Existing catalog entry for merge">
+                      <select name="proposalCatalogEntry" defaultValue="">
+                        <option value="">Choose a searched entry</option>
+                        {proposalCatalogResults.map((entry) => (
+                          <option key={entry.id} value={entry.id}>{entry.diagnosisName} · {entry.category.replaceAll('_', ' ')}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  <Field label="Reviewer notes (required)"><textarea name="proposalNotes" rows={2} maxLength={2000} required /></Field>
+                  <button className="secondary-button" disabled={saving}>Record review</button>
+                </form>
+              </article>
+            ))}
+          </section>}
         </article>}
         <ClinicalRecordReview
           records={chart.clinicalRecords}

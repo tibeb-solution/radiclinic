@@ -2,7 +2,7 @@
 
 ## Current implementation state
 
-Supabase migrations `001`–`007` implement the active organization, patient, visit, and clinical-chart schema. This ERD also describes target entities that have not yet been implemented. Clinic chart reads and writes use Supabase with row-level security; diagnosis catalog, locations, and events are introduced by migration `005_phase2a_diagnosis_management.sql`, lifecycle fields, reassessments, and outcomes by migration `006_phase2b_diagnosis_lifecycle.sql`, and safety alerts and escalation rules by migration `007_phase2c_clinical_safety_alerts.sql`.
+Supabase migrations `001`–`008` implement the active organization, patient, visit, and clinical-chart schema. This ERD also describes target entities that have not yet been implemented. Clinic chart reads and writes use Supabase with row-level security; diagnosis catalog, locations, and events are introduced by migration `005_phase2a_diagnosis_management.sql`, lifecycle fields, reassessments, and outcomes by migration `006_phase2b_diagnosis_lifecycle.sql`, safety alerts and escalation rules by migration `007_phase2c_clinical_safety_alerts.sql`, and specialty case types and diagnosis catalog proposals by migration `008_phase2d_case_based_diagnosis.sql`.
 
 ## Platform realm
 
@@ -108,9 +108,33 @@ VisitDiagnosis
 
 PatientVisit
   1 -- * ClinicalSafetyAlert
+  1 -- * DiagnosisCaseDecision
+  1 -- * DiagnosisCatalogProposal
+  case_type distinguishes the clinical specialty used for recommendations
 
 VisitDiagnosis
   1 -- * ClinicalSafetyAlert (optional diagnosis link)
+  1 -- 0..1 DiagnosisCaseDecision
+  1 -- 0..1 DiagnosisCatalogProposal
+
+DiagnosisCaseDecision
+  * -- 1 Organization
+  * -- 1 Branch
+  * -- 1 Patient
+  * -- 1 PatientVisit
+  * -- 1 VisitDiagnosis
+  records selected case type, diagnosis category, override reason,
+  author, and time for each diagnosis
+
+DiagnosisCatalogProposal
+  * -- 1 Organization
+  * -- 1 Branch
+  * -- 1 Patient
+  * -- 1 PatientVisit
+  * -- 1 VisitDiagnosis
+  * -- 0..1 DiagnosisCatalog (resulting entry)
+  separates catalog-review decisions from patient-specific diagnosis status;
+  review is restricted to organization administrators and central clinical supervisors
 
 ClinicalSafetyAlert
   * -- 1 Patient
