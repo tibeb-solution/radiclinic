@@ -67,7 +67,7 @@ function LoginShell({ platform = false }: { platform?: boolean }) {
         <div className="login-card-rule" />
         <div className="login-card-heading"><h2 id="clinic-signin-title">{platform ? 'Platform administrator sign in' : 'Sign in to your clinic'}</h2><p>{platform ? 'Use your Supabase Auth platform administrator account.' : 'Use the credentials provided by your clinic administrator.'}</p></div>
         <SignInForm platform={platform} />
-        <p className="login-support">{platform ? <>Clinic team? <Link href="/login">Go to clinic sign in</Link></> : <>Platform administrator? <Link href="/admin/login">Sign in to the platform console</Link></>}</p>
+        {platform && <p className="login-support">Clinic team? <Link href="/login">Go to clinic sign in</Link></p>}
         <div className="login-ownership"><LockKeyhole /> Secure authentication <strong>Tibeb Health</strong></div>
       </section>
     </div>

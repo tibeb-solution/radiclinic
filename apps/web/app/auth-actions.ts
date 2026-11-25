@@ -1457,6 +1457,7 @@ export async function getAccountForPage(realm: AuthRealm): Promise<Authenticated
 
 export type ClinicalPatientChart = {
   currentUserId: string
+  preferredDentalNotation: 'fdi' | 'universal' | 'palmer'
   patient: {
     id: string
     patientNumber: string
@@ -1677,6 +1678,60 @@ export type ClinicalPatientChart = {
     instructions: string | null
     prescribedAt: string
   }>
+  medicalAssessments: Array<{
+    id: string
+    visitId: string | null
+    source: string
+    collectionMethod: string | null
+    answers: Record<string, unknown>
+    reviewOfSystems: Record<string, unknown>
+    clinicalNotes: string | null
+    verificationStatus: string
+    verificationNote: string | null
+    recordedAt: string
+  }>
+  treatmentStages: Array<{
+    id: string
+    planId: string
+    stageName: string
+    stageDescription: string | null
+    sequenceNumber: number
+    expectedStartDate: string | null
+    expectedCompletionDate: string | null
+    estimatedDuration: string | null
+    completionCriteria: string | null
+    status: string
+  }>
+  treatmentSteps: Array<{
+    id: string
+    stageId: string
+    stepDescription: string
+    sequenceNumber: number
+    procedureName: string | null
+    toothIdentity: string[]
+    estimatedDurationMinutes: number | null
+    appointmentMinutes: number | null
+    recommendedDate: string | null
+    recommendedIntervalDays: number | null
+    clinicalInstructions: string | null
+    status: string
+  }>
+  appointmentRecommendations: Array<{
+    id: string
+    planId: string | null
+    stageId: string | null
+    stepId: string | null
+    proposedStart: string
+    proposedEnd: string
+    status: string
+  }>
+  referrals: Array<{
+    id: string
+    reason: string
+    recommendedNextSteps: string | null
+    status: string
+    sentAt: string
+  }>
   consents: Array<{
     id: string
     visitId: string | null
@@ -1874,10 +1929,53 @@ export async function getClinicalPatientChart(
   }
   const clinicalSafetyAlertEventRows = clinicalSafetyAlertEventsResult.data ?? []
 
+  const [
+    profileResult,
+    medicalAssessmentResult,
+    stageResult,
+    stepResult,
+    recommendationResult,
+    referralResult,
+  ] = await Promise.all([
+    supabase.from('profiles').select('preferred_dental_notation').eq('id', account.id).maybeSingle(),
+    supabase.from('medical_history_assessments')
+      .select('id, visit_id, source, collection_method, answers, review_of_systems, clinical_notes, verification_status, verification_note, recorded_at')
+      .eq('patient_id', patientId).order('recorded_at', { ascending: false }),
+    supabase.from('treatment_plan_stages')
+      .select('id, plan_id, stage_name, stage_description, sequence_number, expected_start_date, expected_completion_date, estimated_duration, completion_criteria, status')
+      .eq('organization_id', account.clinicId).order('sequence_number', { ascending: true }),
+    supabase.from('treatment_plan_steps')
+      .select('id, stage_id, step_description, sequence_number, procedure_catalog_name, tooth_identity, estimated_duration_minutes, required_appointment_minutes, recommended_date, recommended_interval_days, clinical_instructions, status')
+      .eq('organization_id', account.clinicId).order('sequence_number', { ascending: true }),
+    supabase.from('appointment_recommendations')
+      .select('id, plan_id, stage_id, step_id, proposed_start, proposed_end, status')
+      .eq('patient_id', patientId).order('generated_at', { ascending: false }),
+    supabase.from('clinical_referrals')
+      .select('id, reason, recommended_next_steps, status, sent_at')
+      .eq('patient_id', patientId).order('sent_at', { ascending: false }),
+  ])
+  for (const [label, result] of [
+    ['preferred dental notation', profileResult],
+    ['source-specific medical assessments', medicalAssessmentResult],
+    ['treatment stages', stageResult],
+    ['treatment steps', stepResult],
+    ['appointment recommendations', recommendationResult],
+    ['clinical referrals', referralResult],
+  ] as const) {
+    if (result.error) return { ok: false, error: `Could not load ${label}: ${result.error.message}` }
+  }
+  const profileRow = profileResult.data
+  const medicalAssessmentRows = medicalAssessmentResult.data ?? []
+  const stageRows = stageResult.data ?? []
+  const stepRows = stepResult.data ?? []
+  const recommendationRows = recommendationResult.data ?? []
+  const referralRows = referralResult.data ?? []
+
   return {
     ok: true,
     data: {
       currentUserId: account.id,
+      preferredDentalNotation: (profileRow?.preferred_dental_notation as 'fdi' | 'universal' | 'palmer' | null) ?? 'fdi',
       patient: {
         id: patient.id,
         patientNumber: patient.patient_number,
@@ -2136,6 +2234,60 @@ export async function getClinicalPatientChart(
         quantity: prescription.quantity,
         instructions: prescription.instructions,
         prescribedAt: prescription.prescribed_at,
+      })),
+      medicalAssessments: medicalAssessmentRows.map((entry) => ({
+        id: entry.id,
+        visitId: entry.visit_id,
+        source: entry.source,
+        collectionMethod: entry.collection_method,
+        answers: entry.answers as Record<string, unknown>,
+        reviewOfSystems: entry.review_of_systems as Record<string, unknown>,
+        clinicalNotes: entry.clinical_notes,
+        verificationStatus: entry.verification_status,
+        verificationNote: entry.verification_note,
+        recordedAt: entry.recorded_at,
+      })),
+      treatmentStages: stageRows.map((stage) => ({
+        id: stage.id,
+        planId: stage.plan_id,
+        stageName: stage.stage_name,
+        stageDescription: stage.stage_description,
+        sequenceNumber: stage.sequence_number,
+        expectedStartDate: stage.expected_start_date,
+        expectedCompletionDate: stage.expected_completion_date,
+        estimatedDuration: stage.estimated_duration,
+        completionCriteria: stage.completion_criteria,
+        status: stage.status,
+      })),
+      treatmentSteps: stepRows.map((step) => ({
+        id: step.id,
+        stageId: step.stage_id,
+        stepDescription: step.step_description,
+        sequenceNumber: step.sequence_number,
+        procedureName: step.procedure_catalog_name,
+        toothIdentity: step.tooth_identity,
+        estimatedDurationMinutes: step.estimated_duration_minutes,
+        appointmentMinutes: step.required_appointment_minutes,
+        recommendedDate: step.recommended_date,
+        recommendedIntervalDays: step.recommended_interval_days,
+        clinicalInstructions: step.clinical_instructions,
+        status: step.status,
+      })),
+      appointmentRecommendations: recommendationRows.map((recommendation) => ({
+        id: recommendation.id,
+        planId: recommendation.plan_id,
+        stageId: recommendation.stage_id,
+        stepId: recommendation.step_id,
+        proposedStart: recommendation.proposed_start,
+        proposedEnd: recommendation.proposed_end,
+        status: recommendation.status,
+      })),
+      referrals: referralRows.map((referral) => ({
+        id: referral.id,
+        reason: referral.reason,
+        recommendedNextSteps: referral.recommended_next_steps,
+        status: referral.status,
+        sentAt: referral.sent_at,
       })),
       consents: consentRows.map((consent) => ({
         id: consent.id,
@@ -3026,6 +3178,297 @@ export async function getClinicalAttachmentUrl(
     .createSignedUrl(attachment.storage_path, 300)
   if (error) return { ok: false, error: error.message }
   return { ok: true, url: data.signedUrl }
+}
+
+export async function setPreferredDentalNotation(notation: 'fdi' | 'universal' | 'palmer'): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.from('profiles')
+    .update({ preferred_dental_notation: notation })
+    .eq('id', account.id)
+  if (error) return { ok: false, error: error.message }
+  await writeAuditEvent(account, 'profile.dental_notation.update', 'profile', account.id)
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function addMedicalHistoryAssessment(input: {
+  patientId: string
+  branchId: string
+  visitId: string
+  source: 'patient_reported' | 'nursing_assessment' | 'doctor_assessment'
+  collectionMethod: string
+  answers: Record<string, unknown>
+  reviewOfSystems: Record<string, unknown>
+  clinicalNotes: string
+  verificationStatus?: 'unverified' | 'reviewed' | 'verified' | 'not_verified' | 'requires_clarification' | 'disputed' | 'not_clinically_relevant'
+  verificationNote?: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  if (!input.patientId || !input.branchId) return { ok: false, error: 'Choose a patient and branch.' }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('medical_history_assessments').insert({
+    organization_id: account.clinicId,
+    branch_id: input.branchId,
+    patient_id: input.patientId,
+    visit_id: input.visitId || null,
+    source: input.source,
+    collection_method: input.collectionMethod.trim() || null,
+    answers: input.answers,
+    review_of_systems: input.reviewOfSystems,
+    clinical_notes: input.clinicalNotes.trim() || null,
+    verification_status: input.verificationStatus ?? 'unverified',
+    verification_note: input.verificationNote?.trim() || null,
+    recorded_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  const auditError = await writeAuditEvent(
+    account, `medical_history.${input.source}.add`,
+    'medical_history_assessment', data.id, input.branchId,
+    { source: input.source, verificationStatus: input.verificationStatus ?? 'unverified' }
+  )
+  if (auditError) return { ok: false, error: auditError }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function addDoctorMedicalAssessment(input: {
+  patientId: string
+  branchId: string
+  visitId: string
+  medicalHistoryReview: Record<string, unknown>
+  systemicAssessment: Record<string, unknown>
+  clinicalRiskAssessment: Record<string, unknown>
+  clinicalConclusion: string
+  differentialDiagnoses: unknown[]
+  investigationsRequired: unknown[]
+  referrals: unknown[]
+  treatmentPrecautions: string
+  recommendations: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  if (!input.visitId) return { ok: false, error: 'Select a visit for the doctor assessment.' }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('doctor_medical_assessments').insert({
+    organization_id: account.clinicId,
+    branch_id: input.branchId,
+    patient_id: input.patientId,
+    visit_id: input.visitId,
+    medical_history_review: input.medicalHistoryReview,
+    systemic_assessment: input.systemicAssessment,
+    clinical_risk_assessment: input.clinicalRiskAssessment,
+    clinical_conclusion: input.clinicalConclusion.trim() || null,
+    differential_diagnoses: input.differentialDiagnoses,
+    investigations_required: input.investigationsRequired,
+    referrals: input.referrals,
+    treatment_precautions: input.treatmentPrecautions.trim() || null,
+    recommendations: input.recommendations.trim() || null,
+    created_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  await writeAuditEvent(account, 'doctor_medical_assessment.add', 'doctor_medical_assessment', data.id, input.branchId)
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function recordClinicalSafetyDecision(input: {
+  patientId: string
+  branchId: string
+  visitId: string
+  alertId: string
+  decision: 'accepted_alternative' | 'modified' | 'rejected' | 'overridden'
+  overrideReason: string
+  finalRecommendation: string
+  alternatives: unknown[]
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  if (input.decision === 'overridden' && !input.overrideReason.trim()) {
+    return { ok: false, error: 'Document the clinical reason for the override.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('clinical_safety_decisions').insert({
+    organization_id: account.clinicId,
+    branch_id: input.branchId,
+    patient_id: input.patientId,
+    visit_id: input.visitId || null,
+    alert_id: input.alertId || null,
+    decision: input.decision,
+    override_reason: input.overrideReason.trim() || null,
+    final_recommendation: input.finalRecommendation.trim() || null,
+    alternatives: input.alternatives,
+    actor_id: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  await writeAuditEvent(account, 'clinical_safety.decision_recorded', 'clinical_safety_decision', data.id, input.branchId)
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function createClinicalReferral(input: {
+  patientId: string
+  branchId: string
+  receivingOrganizationId: string
+  receivingBranchId: string
+  receivingDoctorId: string
+  reason: string
+  recommendedNextSteps: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  if (!input.reason.trim()) return { ok: false, error: 'Enter a referral reason.' }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('clinical_referrals').insert({
+    organization_id: account.clinicId,
+    branch_id: input.branchId,
+    patient_id: input.patientId,
+    referring_doctor_id: account.id,
+    receiving_organization_id: input.receivingOrganizationId || null,
+    receiving_branch_id: input.receivingBranchId || null,
+    receiving_doctor_id: input.receivingDoctorId || null,
+    reason: input.reason.trim(),
+    recommended_next_steps: input.recommendedNextSteps.trim() || null,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  await writeAuditEvent(account, 'clinical_referral.sent', 'clinical_referral', data.id, input.branchId)
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function createAppointmentRecommendation(input: {
+  patientId: string
+  branchId: string
+  planId: string
+  stageId: string
+  stepId: string
+  assignedDoctorId: string
+  proposedStart: string
+  proposedEnd: string
+  room: string
+  equipment: string[]
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  const start = new Date(input.proposedStart)
+  const end = new Date(input.proposedEnd)
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+    return { ok: false, error: 'Enter a valid appointment start and end time.' }
+  }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('appointment_recommendations').insert({
+    organization_id: account.clinicId,
+    branch_id: input.branchId,
+    patient_id: input.patientId,
+    plan_id: input.planId || null,
+    stage_id: input.stageId || null,
+    step_id: input.stepId || null,
+    assigned_doctor_id: input.assignedDoctorId || null,
+    proposed_start: start.toISOString(),
+    proposed_end: end.toISOString(),
+    room_resource: input.room.trim() || null,
+    equipment_resources: input.equipment,
+    generated_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  await writeAuditEvent(account, 'appointment_recommendation.created', 'appointment_recommendation', data.id, input.branchId)
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function acceptAppointmentRecommendation(input: {
+  recommendationId: string
+  proposedStart: string
+  proposedEnd: string
+  assignedDoctorId: string
+  overrideReason: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.rpc('accept_treatment_appointment_recommendation', {
+    p_recommendation_id: input.recommendationId,
+    p_starts_at: new Date(input.proposedStart).toISOString(),
+    p_ends_at: new Date(input.proposedEnd).toISOString(),
+    p_assigned_doctor_id: input.assignedDoctorId || null,
+    p_override_reason: input.overrideReason.trim() || null,
+  })
+  if (error) return { ok: false, error: error.message }
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function addTreatmentPlanStage(input: {
+  planId: string
+  stageName: string
+  stageDescription: string
+  sequenceNumber: number
+  expectedStartDate: string
+  expectedCompletionDate: string
+  estimatedDuration: string
+  completionCriteria: string
+  requiredMaterials: unknown[]
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  const supabase = await createSupabaseServerClient()
+  const { data: plan, error: planError } = await supabase.from('treatment_plans')
+    .select('organization_id').eq('id', input.planId).eq('organization_id', account.clinicId).maybeSingle()
+  if (planError || !plan) return { ok: false, error: planError?.message ?? 'Treatment plan not found.' }
+  const { data, error } = await supabase.from('treatment_plan_stages').insert({
+    organization_id: account.clinicId,
+    plan_id: input.planId,
+    stage_name: input.stageName.trim(),
+    stage_description: input.stageDescription.trim() || null,
+    sequence_number: input.sequenceNumber,
+    expected_start_date: input.expectedStartDate || null,
+    expected_completion_date: input.expectedCompletionDate || null,
+    estimated_duration: input.estimatedDuration.trim() || null,
+    required_materials: input.requiredMaterials,
+    completion_criteria: input.completionCriteria.trim() || null,
+    created_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  await writeAuditEvent(account, 'treatment_plan.stage.add', 'treatment_plan_stage', data.id)
+  revalidatePath('/')
+  return { ok: true }
+}
+
+export async function addTreatmentPlanStep(input: {
+  stageId: string
+  stepDescription: string
+  sequenceNumber: number
+  procedureName: string
+  toothIdentity: string[]
+  estimatedDurationMinutes: number | null
+  appointmentMinutes: number | null
+  recommendedDate: string
+  recommendedIntervalDays: number | null
+  clinicalInstructions: string
+}): Promise<ActionResult> {
+  const account = await clinicAccount()
+  if (!account) return { ok: false, error: 'Sign in to an active clinic.' }
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.from('treatment_plan_steps').insert({
+    organization_id: account.clinicId,
+    stage_id: input.stageId,
+    step_description: input.stepDescription.trim(),
+    sequence_number: input.sequenceNumber,
+    procedure_catalog_name: input.procedureName.trim() || null,
+    tooth_identity: input.toothIdentity,
+    estimated_duration_minutes: input.estimatedDurationMinutes,
+    required_appointment_minutes: input.appointmentMinutes,
+    recommended_date: input.recommendedDate || null,
+    recommended_interval_days: input.recommendedIntervalDays,
+    clinical_instructions: input.clinicalInstructions.trim() || null,
+    created_by: account.id,
+  }).select('id').single()
+  if (error) return { ok: false, error: error.message }
+  await writeAuditEvent(account, 'treatment_plan.step.add', 'treatment_plan_step', data.id)
+  revalidatePath('/')
+  return { ok: true }
 }
 
 export async function createClinicTreatmentPlan(input: {

@@ -2,13 +2,20 @@
 
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  addDoctorMedicalAssessment,
+  addMedicalHistoryAssessment,
+  addTreatmentPlanStage,
+  addTreatmentPlanStep,
   addOdontogramFinding,
   addDiagnosisCatalogEntry,
   addPatientHistoryEntry,
   addVisitDiagnosis,
   acknowledgeClinicalSafetyAlert,
   configureClinicalSafetyAlertRule,
+  createAppointmentRecommendation,
+  acceptAppointmentRecommendation,
   createClinicalSafetyAlert,
+  createClinicalReferral,
   createClinicPrescription,
   createClinicTreatmentPlan,
   createClinicalEncounter,
@@ -16,6 +23,7 @@ import {
   getClinicalPatientChart,
   recordPatientConsent,
   recordPerformedProcedure,
+  recordClinicalSafetyDecision,
   recordClinicalOutcome,
   recordDiagnosisReassessment,
   reviewDiagnosisCatalogProposal,
@@ -26,6 +34,7 @@ import {
   submitClinicalRecord,
   updateClinicalVisitCaseType,
   updateTreatmentPlanItemStatus,
+  setPreferredDentalNotation,
   uploadClinicalAttachment,
   updateClinicPatientProfile,
   type ClinicalEncounterInput,
@@ -546,7 +555,79 @@ export function PatientClinicalChart({
         </form>
       </article>
       <article className="panel chart-panel">
+        <div className="panel-header"><div><h2>Source-separated clinical assessment</h2><p>Patient, nursing and doctor entries remain independent. Use structured JSON only for coded answers and Review of Systems.</p></div></div>
+        <form className="clinical-form" onSubmit={(event) => handleSubmit(event, async (form) => {
+          let answers: Record<string, unknown> = {}
+          let reviewOfSystems: Record<string, unknown> = {}
+          try {
+            answers = JSON.parse(String(form.get('assessmentAnswers') || '{}')) as Record<string, unknown>
+            reviewOfSystems = JSON.parse(String(form.get('reviewOfSystems') || '{}')) as Record<string, unknown>
+          } catch {
+            setFormError('Answers and Review of Systems must be valid JSON objects.')
+            return { ok: false, error: 'Answers and Review of Systems must be valid JSON objects.' }
+          }
+          return addMedicalHistoryAssessment({
+            patientId,
+            branchId,
+            visitId: String(form.get('assessmentVisit') ?? ''),
+            source: String(form.get('assessmentSource') ?? 'patient_reported') as 'patient_reported' | 'nursing_assessment' | 'doctor_assessment',
+            collectionMethod: String(form.get('collectionMethod') ?? ''),
+            answers,
+            reviewOfSystems,
+            clinicalNotes: String(form.get('assessmentNotes') ?? ''),
+            verificationStatus: String(form.get('verificationStatus') ?? 'unverified') as 'unverified' | 'reviewed' | 'verified' | 'not_verified' | 'requires_clarification' | 'disputed' | 'not_clinically_relevant',
+            verificationNote: String(form.get('verificationNote') ?? ''),
+          })
+        }, 'Source-separated clinical assessment saved.')}>
+          <div className="clinical-grid">
+            <Field label="Information source"><select name="assessmentSource"><option value="patient_reported">Patient reported</option><option value="nursing_assessment">Nursing assessment</option><option value="doctor_assessment">Doctor assessment</option></select></Field>
+            <Field label="Related visit"><select name="assessmentVisit" defaultValue={selectedVisitId}><option value="">No visit linked</option>{chart.visits.map((visit) => <option key={visit.id} value={visit.id}>{visit.visitNumber}</option>)}</select></Field>
+          </div>
+          <Field label="Collection method"><input name="collectionMethod" maxLength={200} placeholder="Questionnaire, interview, nursing intake…" /></Field>
+          <Field label="Structured answers (JSON)"><textarea name="assessmentAnswers" rows={4} maxLength={10000} defaultValue={'{}'} /></Field>
+          <Field label="Review of Systems (JSON)"><textarea name="reviewOfSystems" rows={4} maxLength={10000} defaultValue={'{}'} /></Field>
+          <Field label="Clinical notes"><textarea name="assessmentNotes" rows={2} maxLength={5000} /></Field>
+          <div className="clinical-grid">
+            <Field label="Verification status"><select name="verificationStatus"><option value="unverified">Unverified</option><option value="reviewed">Reviewed</option><option value="verified">Verified</option><option value="not_verified">Not verified</option><option value="requires_clarification">Requires clarification</option><option value="disputed">Disputed / inconsistent</option><option value="not_clinically_relevant">Not clinically relevant</option></select></Field>
+            <Field label="Verification note"><input name="verificationNote" maxLength={2000} /></Field>
+          </div>
+          <button className="primary-button" disabled={saving}><Plus /> Save assessment</button>
+        </form>
+      </article>
+      <article className="panel chart-panel">
+        <div className="panel-header"><div><h2>Doctor medical assessment</h2><p>Records the clinical conclusion without replacing patient or nursing source records.</p></div></div>
+        <form className="clinical-form" onSubmit={(event) => handleSubmit(event, async (form) =>
+          addDoctorMedicalAssessment({
+            patientId,
+            branchId,
+            visitId: String(form.get('doctorAssessmentVisit') ?? ''),
+            medicalHistoryReview: {},
+            systemicAssessment: {},
+            clinicalRiskAssessment: {},
+            clinicalConclusion: String(form.get('clinicalConclusion') ?? ''),
+            differentialDiagnoses: [],
+            investigationsRequired: [],
+            referrals: [],
+            treatmentPrecautions: String(form.get('treatmentPrecautions') ?? ''),
+            recommendations: String(form.get('doctorRecommendations') ?? ''),
+          }), 'Doctor medical assessment saved.')}>
+          <Field label="Related visit"><select name="doctorAssessmentVisit" required defaultValue={selectedVisitId}><option value="">Select a visit</option>{chart.visits.map((visit) => <option key={visit.id} value={visit.id}>{visit.visitNumber}</option>)}</select></Field>
+          <Field label="Clinical conclusion"><textarea name="clinicalConclusion" rows={3} maxLength={5000} /></Field>
+          <Field label="Treatment precautions"><textarea name="treatmentPrecautions" rows={2} maxLength={3000} /></Field>
+          <Field label="Recommendations"><textarea name="doctorRecommendations" rows={2} maxLength={3000} /></Field>
+          <button className="primary-button" disabled={saving}><Stethoscope /> Save doctor assessment</button>
+        </form>
+      </article>
+      <article className="panel chart-panel">
         <div className="panel-header"><div><h2>History timeline</h2><p>{chart.historyEntries.length} preserved entr{chart.historyEntries.length === 1 ? 'y' : 'ies'}</p></div></div>
+        {chart.medicalAssessments.length ? <div className="chart-timeline">{chart.medicalAssessments.map((assessment) => (
+          <article className="chart-history-entry" key={assessment.id}>
+            <span className="chart-entry-tag">{assessment.source.replaceAll('_', ' ')} · {assessment.verificationStatus.replaceAll('_', ' ')}</span>
+            {assessment.collectionMethod && <small>Collection: {assessment.collectionMethod}</small>}
+            {assessment.clinicalNotes && <p>{assessment.clinicalNotes}</p>}
+            <small>{dateTime(assessment.recordedAt)}</small>
+          </article>
+        ))}</div> : null}
         {chart.historyEntries.length ? <div className="chart-timeline">{chart.historyEntries.map((entry) => (
           <article className="chart-history-entry" key={entry.id}>
             <span className="chart-entry-tag">{entry.category === 'dental' ? 'Dental' : 'Medical'} · {entry.entryType}</span>
@@ -1075,6 +1156,19 @@ export function PatientClinicalChart({
     {section === 'dental' && <div className="chart-content-grid">
       <article className="panel chart-panel">
         <div className="panel-header"><div><h2>Interactive odontogram</h2><p>Select a tooth, record a surface and a finding. Tooth numbering follows FDI.</p></div></div>
+        <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+          setPreferredDentalNotation(String(form.get('dentalNotation') ?? 'fdi') as 'fdi' | 'universal' | 'palmer'),
+        'Dental numbering preference updated.')}>
+          <Field label="My tooth display notation">
+            <select name="dentalNotation" defaultValue={chart.preferredDentalNotation}>
+              <option value="fdi">FDI</option>
+              <option value="universal">Universal</option>
+              <option value="palmer">Palmer</option>
+            </select>
+          </Field>
+          <button className="secondary-button" disabled={saving}>Save display preference</button>
+        </form>
+        <p className="workspace-help-copy">The chart stores anatomical tooth identity internally. The selected notation only changes display.</p>
         <div className="odontogram-legend"><span><i className="tooth-dot tooth-existing" /> Existing</span><span><i className="tooth-dot tooth-proposed" /> Proposed</span><span><i className="tooth-dot tooth-progress" /> In progress</span><span><i className="tooth-dot tooth-completed" /> Completed</span></div>
         <p className="odontogram-label">Permanent teeth</p>
         <div className="odontogram-grid odontogram-permanent">{permanentTeeth.map((tooth) => (
@@ -1153,6 +1247,113 @@ export function PatientClinicalChart({
           <Field label="Related visit"><select name="planVisit" defaultValue={selectedVisitId}><option value="">No visit linked</option>{chart.visits.map((visit) => <option key={visit.id} value={visit.id}>{visit.visitNumber} · {new Date(visit.visitedAt).toLocaleDateString()}</option>)}</select></Field>
           <button className="primary-button" disabled={saving}><Plus /> Create proposed plan</button>
         </form>
+        <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+          addTreatmentPlanStage({
+            planId: String(form.get('stagePlan') ?? ''),
+            stageName: String(form.get('stageName') ?? ''),
+            stageDescription: String(form.get('stageDescription') ?? ''),
+            sequenceNumber: Number(form.get('stageSequence') ?? '1'),
+            expectedStartDate: String(form.get('stageStart') ?? ''),
+            expectedCompletionDate: String(form.get('stageCompletion') ?? ''),
+            estimatedDuration: String(form.get('stageDuration') ?? ''),
+            completionCriteria: String(form.get('stageCriteria') ?? ''),
+            requiredMaterials: [],
+          }), 'Treatment stage added.')}>
+          <h3>Add stage</h3>
+          <Field label="Treatment plan"><select name="stagePlan" required><option value="">Select plan</option>{chart.treatmentPlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.title}</option>)}</select></Field>
+          <div className="clinical-grid">
+            <Field label="Stage name"><input name="stageName" required maxLength={200} /></Field>
+            <Field label="Sequence"><input name="stageSequence" type="number" min="1" defaultValue="1" required /></Field>
+          </div>
+          <Field label="Stage description"><textarea name="stageDescription" rows={2} maxLength={1500} /></Field>
+          <div className="clinical-grid">
+            <Field label="Expected start"><input name="stageStart" type="date" /></Field>
+            <Field label="Expected completion"><input name="stageCompletion" type="date" /></Field>
+            <Field label="Estimated duration"><input name="stageDuration" maxLength={100} placeholder="e.g. 6 months" /></Field>
+          </div>
+          <Field label="Completion criteria"><textarea name="stageCriteria" rows={2} maxLength={1500} /></Field>
+          <button className="secondary-button" disabled={saving}><Plus /> Add stage</button>
+        </form>
+        <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) => {
+          const toothIdentity = String(form.get('stepTeeth') ?? '').split(',').map((tooth) => tooth.trim()).filter(Boolean)
+          const duration = String(form.get('stepDuration') ?? '').trim()
+          const appointment = String(form.get('stepAppointment') ?? '').trim()
+          const interval = String(form.get('stepInterval') ?? '').trim()
+          return addTreatmentPlanStep({
+            stageId: String(form.get('stepStage') ?? ''),
+            stepDescription: String(form.get('stepDescription') ?? ''),
+            sequenceNumber: Number(form.get('stepSequence') ?? '1'),
+            procedureName: String(form.get('stepProcedure') ?? ''),
+            toothIdentity,
+            estimatedDurationMinutes: duration ? Number(duration) : null,
+            appointmentMinutes: appointment ? Number(appointment) : null,
+            recommendedDate: String(form.get('stepDate') ?? ''),
+            recommendedIntervalDays: interval ? Number(interval) : null,
+            clinicalInstructions: String(form.get('stepInstructions') ?? ''),
+          })
+        }, 'Treatment step added.')}>
+          <h3>Add treatment step</h3>
+          <Field label="Stage"><select name="stepStage" required><option value="">Select stage</option>{chart.treatmentStages.map((stage) => <option key={stage.id} value={stage.id}>{stage.stageName}</option>)}</select></Field>
+          <Field label="Step description"><textarea name="stepDescription" rows={2} maxLength={1000} required /></Field>
+          <div className="clinical-grid">
+            <Field label="Sequence"><input name="stepSequence" type="number" min="1" defaultValue="1" required /></Field>
+            <Field label="Procedure"><input name="stepProcedure" maxLength={200} /></Field>
+            <Field label="FDI teeth"><input name="stepTeeth" placeholder="e.g. 16, 17" /></Field>
+            <Field label="Procedure minutes"><input name="stepDuration" type="number" min="1" /></Field>
+            <Field label="Appointment minutes"><input name="stepAppointment" type="number" min="1" /></Field>
+            <Field label="Recommended date"><input name="stepDate" type="date" /></Field>
+            <Field label="Interval (days)"><input name="stepInterval" type="number" min="0" /></Field>
+          </div>
+          <Field label="Clinical instructions"><textarea name="stepInstructions" rows={2} maxLength={2000} /></Field>
+          <button className="secondary-button" disabled={saving}><Plus /> Add step</button>
+        </form>
+        <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+          createAppointmentRecommendation({
+            patientId,
+            branchId,
+            planId: String(form.get('recommendationPlan') ?? ''),
+            stageId: String(form.get('recommendationStage') ?? ''),
+            stepId: String(form.get('recommendationStep') ?? ''),
+            assignedDoctorId: String(form.get('recommendationDoctor') ?? ''),
+            proposedStart: String(form.get('recommendationStart') ?? ''),
+            proposedEnd: String(form.get('recommendationEnd') ?? ''),
+            room: String(form.get('recommendationRoom') ?? ''),
+            equipment: [],
+          }), 'Appointment recommendation created.')}>
+          <h3>Recommend appointment</h3>
+          <div className="clinical-grid">
+            <Field label="Plan"><select name="recommendationPlan"><option value="">No plan</option>{chart.treatmentPlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.title}</option>)}</select></Field>
+            <Field label="Stage"><select name="recommendationStage"><option value="">No stage</option>{chart.treatmentStages.map((stage) => <option key={stage.id} value={stage.id}>{stage.stageName}</option>)}</select></Field>
+            <Field label="Step"><select name="recommendationStep"><option value="">No step</option>{chart.treatmentSteps.map((step) => <option key={step.id} value={step.id}>{step.stepDescription}</option>)}</select></Field>
+            <Field label="Doctor ID"><input name="recommendationDoctor" required /></Field>
+            <Field label="Start"><input name="recommendationStart" type="datetime-local" required /></Field>
+            <Field label="End"><input name="recommendationEnd" type="datetime-local" required /></Field>
+            <Field label="Treatment room"><input name="recommendationRoom" /></Field>
+          </div>
+          <button className="secondary-button" disabled={saving}><Plus /> Create recommendation</button>
+        </form>
+        {chart.appointmentRecommendations.length > 0 && <div className="chart-timeline">{chart.appointmentRecommendations.map((recommendation) => (
+          <article className="chart-history-entry" key={recommendation.id}>
+            <span className="chart-entry-tag">{recommendation.status}</span>
+            <p>{dateTime(recommendation.proposedStart)} to {dateTime(recommendation.proposedEnd)}</p>
+            {recommendation.status === 'proposed' && <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+              acceptAppointmentRecommendation({
+                recommendationId: recommendation.id,
+                proposedStart: String(form.get('acceptStart') ?? ''),
+                proposedEnd: String(form.get('acceptEnd') ?? ''),
+                assignedDoctorId: String(form.get('acceptDoctor') ?? ''),
+                overrideReason: String(form.get('overrideReason') ?? ''),
+              }), 'Appointment scheduled.')}>
+              <div className="clinical-grid">
+                <Field label="Confirmed start"><input name="acceptStart" type="datetime-local" required defaultValue={recommendation.proposedStart.slice(0, 16)} /></Field>
+                <Field label="Confirmed end"><input name="acceptEnd" type="datetime-local" required defaultValue={recommendation.proposedEnd.slice(0, 16)} /></Field>
+                <Field label="Doctor ID"><input name="acceptDoctor" required /></Field>
+              </div>
+              <Field label="Override reason (required only for conflicts)"><input name="overrideReason" maxLength={2000} /></Field>
+              <button className="secondary-button" disabled={saving}>Accept and schedule</button>
+            </form>}
+          </article>
+        ))}</div>}
       </article>
 
       <div className="chart-stack">
@@ -1172,6 +1373,16 @@ export function PatientClinicalChart({
                   >{updatingTreatmentId === item.id ? 'Saving…' : treatmentActionLabel(nextStatus)}</button>
                 ))}
               </div>)}
+              {chart.treatmentStages.filter((stage) => stage.planId === plan.id).map((stage) => (
+                <div className="chart-treatment-item" key={stage.id}>
+                  <p><strong>Stage {stage.sequenceNumber}: {stage.stageName}</strong> · {stage.status.replaceAll('_', ' ')}</p>
+                  {stage.stageDescription && <small>{stage.stageDescription}</small>}
+                  {stage.expectedStartDate && <small>Expected {stage.expectedStartDate}{stage.expectedCompletionDate ? ` to ${stage.expectedCompletionDate}` : ''}</small>}
+                  {chart.treatmentSteps.filter((step) => step.stageId === stage.id).map((step) => (
+                    <span key={step.id}>{step.sequenceNumber}. {step.stepDescription}{step.appointmentMinutes ? ` · ${step.appointmentMinutes} min` : ''}</span>
+                  ))}
+                </div>
+              ))}
               <small>{dateTime(plan.createdAt)}</small>
             </article>
           ))}</div> : <p className="chart-empty">No treatment plans yet.</p>}
@@ -1277,6 +1488,35 @@ export function PatientClinicalChart({
     {section === 'documents' && <div className="chart-content-grid">
       <article className="panel chart-panel">
         <div className="panel-header"><div><h2>Secure clinical documents</h2><p>Files are kept in a private bucket. Access links expire after five minutes and are recorded.</p></div></div>
+        <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+          createClinicalReferral({
+            patientId,
+            branchId,
+            receivingOrganizationId: String(form.get('receivingOrganization') ?? ''),
+            receivingBranchId: String(form.get('receivingBranch') ?? ''),
+            receivingDoctorId: String(form.get('receivingDoctor') ?? ''),
+            reason: String(form.get('referralReason') ?? ''),
+            recommendedNextSteps: String(form.get('referralNextSteps') ?? ''),
+          }), 'Clinical referral sent.')}>
+          <h3>Refer patient</h3>
+          <p className="workspace-help-copy">Enter receiving organization, branch and doctor identifiers only for clinics authorized to receive this referral.</p>
+          <div className="clinical-grid">
+            <Field label="Receiving organization ID"><input name="receivingOrganization" /></Field>
+            <Field label="Receiving branch ID"><input name="receivingBranch" /></Field>
+            <Field label="Receiving doctor ID"><input name="receivingDoctor" /></Field>
+          </div>
+          <Field label="Referral reason"><textarea name="referralReason" rows={2} maxLength={3000} required /></Field>
+          <Field label="Recommended next steps"><textarea name="referralNextSteps" rows={2} maxLength={3000} /></Field>
+          <button className="secondary-button" disabled={saving}><Stethoscope /> Send referral</button>
+        </form>
+        {chart.referrals.length > 0 && <div className="chart-timeline">{chart.referrals.map((referral) => (
+          <article className="chart-history-entry" key={referral.id}>
+            <span className="chart-entry-tag">{referral.status.replaceAll('_', ' ')}</span>
+            <p>{referral.reason}</p>
+            {referral.recommendedNextSteps && <small>{referral.recommendedNextSteps}</small>}
+            <small>{dateTime(referral.sentAt)}</small>
+          </article>
+        ))}</div>}
         <form className="clinical-form" encType="multipart/form-data" onSubmit={(event) =>
           handleSubmit(event, uploadClinicalAttachment, 'Document uploaded to the private clinical file store.')}>
           <input type="hidden" name="patientId" value={patientId} />
@@ -1355,6 +1595,25 @@ export function PatientClinicalChart({
           <p className="workspace-help-copy">You will be recorded as the responsible clinician. Alerts cannot be deleted; acknowledge with the action taken, and resolve only with a documented reason.</p>
           <button className="primary-button" disabled={saving}><Bell /> {saving ? 'Flagging alert…' : 'Flag safety alert'}</button>
         </form> : <p className="chart-empty">Create or select a clinical visit before flagging a safety alert.</p>}
+        {chart.clinicalSafetyAlerts.length > 0 && <form className="clinical-form clinical-subform" onSubmit={(event) => handleSubmit(event, async (form) =>
+          recordClinicalSafetyDecision({
+            patientId,
+            branchId,
+            visitId: String(form.get('decisionVisit') ?? ''),
+            alertId: String(form.get('decisionAlert') ?? ''),
+            decision: String(form.get('decisionType') ?? 'rejected') as 'accepted_alternative' | 'modified' | 'rejected' | 'overridden',
+            overrideReason: String(form.get('overrideReason') ?? ''),
+            finalRecommendation: String(form.get('finalRecommendation') ?? ''),
+            alternatives: [],
+          }), 'Clinical safety decision recorded.')}>
+          <h3>Record doctor's final decision</h3>
+          <Field label="Related alert"><select name="decisionAlert" required><option value="">Select alert</option>{chart.clinicalSafetyAlerts.map((alert) => <option key={alert.id} value={alert.id}>{alert.title}</option>)}</select></Field>
+          <Field label="Related visit"><select name="decisionVisit" defaultValue={selectedVisitId}><option value="">No visit linked</option>{chart.visits.map((visit) => <option key={visit.id} value={visit.id}>{visit.visitNumber}</option>)}</select></Field>
+          <Field label="Decision"><select name="decisionType"><option value="accepted_alternative">Accepted suggested alternative</option><option value="modified">Modified treatment or prescription</option><option value="rejected">Rejected recommendation</option><option value="overridden">Overrode alert</option></select></Field>
+          <Field label="Override or clinical reason"><textarea name="overrideReason" rows={2} maxLength={2000} /></Field>
+          <Field label="Final recommendation"><textarea name="finalRecommendation" rows={2} maxLength={3000} /></Field>
+          <button className="secondary-button" disabled={saving}>Record decision</button>
+        </form>}
       </article>
 
       <article className="panel chart-panel">

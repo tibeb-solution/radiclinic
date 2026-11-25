@@ -1,7 +1,6 @@
 'use client'
 
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import {
   Activity,
   ArrowDownRight,
@@ -148,7 +147,6 @@ function Sidebar({
       </nav>
       <div className="sidebar-bottom">
         <button className={`nav-item ${active === 'Activity' ? 'nav-item-active' : ''}`} onClick={() => onNavigate('Activity')}><Activity className="nav-icon" /><span>Activity</span></button>
-        <Link className="nav-item" href="/admin"><Building2 className="nav-icon" /><span>Platform admin</span></Link>
         <form action={logout.bind(null, 'clinic')}><button className="nav-item" type="submit"><LockKeyhole className="nav-icon" /><span>Sign out</span></button></form>
         <div className="sidebar-divider" />
         <div className="provider-brand"><span className="provider-icon"><Activity /></span><span><small>Powered by</small><strong>Tibeb Health</strong></span><ShieldCheck className="provider-check" /></div>
