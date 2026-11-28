@@ -195,11 +195,12 @@ function PatientTable({
       <td><div className="patient-cell"><Avatar name={patient.name} /><span><button className="patient-profile-link" onClick={() => onOpen(patient)}><strong>{patient.name}</strong></button><small>{patient.dateOfBirth || 'Date of birth not provided'}</small></span></div></td>
       <td>{patient.patientNumber}</td><td>{patient.phone || '—'}</td>
       <td><span className={`status ${patient.status === 'active' ? 'status-checked-in' : ''}`}>{patient.status}</span></td>
-      <td>{patient.status === 'archived'
+      <td>{patient.status === 'archived' || patient.status === 'deceased'
         ? <button className="row-action" onClick={() => onStatusChange(patient, 'active')}>Restore</button>
         : <div className="patient-row-actions">
             <button className="row-action" onClick={() => onStatusChange(patient, patient.status === 'active' ? 'inactive' : 'active')}>{patient.status === 'active' ? 'Deactivate' : 'Reactivate'}</button>
             <button className="row-action" onClick={() => onStatusChange(patient, 'archived')}>Archive</button>
+            <button className="row-action" onClick={() => onStatusChange(patient, 'deceased')}>Mark deceased</button>
           </div>}
       </td>
     </tr>)}

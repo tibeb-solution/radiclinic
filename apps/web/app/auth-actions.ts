@@ -500,7 +500,11 @@ export async function setClinicPatientStatus(patientId: string, status: Patient[
   if (!account) return { ok: false, error: 'Complete account setup and sign in to an active clinic first.' }
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase.from('patients')
-    .update({ status, archived_at: status === 'archived' ? new Date().toISOString() : null })
+    .update({
+      status,
+      archived_at: status === 'archived' ? new Date().toISOString() : null,
+      deceased_at: status === 'deceased' ? new Date().toISOString() : null,
+    })
     .eq('organization_id', account.clinicId)
     .eq('id', patientId)
     .select('id, registered_branch_id')

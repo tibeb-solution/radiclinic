@@ -47,7 +47,7 @@ export interface Patient {
   emergencyContactName?: string
   emergencyContactPhone?: string
   emergencyContactRelationship?: string
-  status: 'active' | 'inactive' | 'archived'
+  status: 'active' | 'inactive' | 'archived' | 'deceased'
   createdAt: string
 }
 
